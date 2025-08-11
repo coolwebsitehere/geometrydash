@@ -38,31 +38,31 @@
   let player, obstacles, scrollSpeed, score, highScore, gameOver;
   let patternIndex = 0;
 
-  // Pattern sequences for normal and high score
+  // Pattern sequences for normal and high score (added platform)
   const patternSequenceNormal = [
     { type: 'spike', count: 1, gapAfter: 220 },
-    { type: 'gap', count: 0, gapAfter: 260 },
+    { type: 'platform', count: 1, gapAfter: 260 },
     { type: 'block', count: 1, gapAfter: 240 },
     { type: 'spike', count: 2, gapAfter: 280 },
     { type: 'gap', count: 0, gapAfter: 260 },
     { type: 'block', count: 2, gapAfter: 300 },
+    { type: 'platform', count: 1, gapAfter: 260 },
     { type: 'spike', count: 1, gapAfter: 220 },
     { type: 'gap', count: 0, gapAfter: 260 },
     { type: 'block', count: 1, gapAfter: 240 },
-    { type: 'spike', count: 2, gapAfter: 300 },
   ];
 
   const patternSequenceHighScore = [
     { type: 'spike', count: 1, gapAfter: 220 },
-    { type: 'gap', count: 0, gapAfter: 260 },
+    { type: 'platform', count: 1, gapAfter: 260 },
     { type: 'block', count: 1, gapAfter: 240 },
     { type: 'spike', count: 3, gapAfter: 320 }, // 3 spikes allowed after 4000
     { type: 'gap', count: 0, gapAfter: 260 },
     { type: 'block', count: 2, gapAfter: 300 },
+    { type: 'platform', count: 1, gapAfter: 260 },
     { type: 'spike', count: 2, gapAfter: 280 },
     { type: 'gap', count: 0, gapAfter: 260 },
     { type: 'block', count: 1, gapAfter: 240 },
-    { type: 'spike', count: 3, gapAfter: 320 },
   ];
 
   function initGame() {
@@ -73,6 +73,7 @@
       height: PLAYER_SIZE,
       velocityY: 0,
       onGround: true,
+      onPlatform: false, // Track if player is standing on platform
     };
 
     obstacles = [];
@@ -128,8 +129,17 @@
     ctx.fillRect(x, y - size, size, size);
   }
 
+  function drawPlatform(x, y, size) {
+    ctx.fillStyle = '#27ae60'; // Green color for platform
+    ctx.fillRect(x, y - size, size, size);
+    // Optional: add a border
+    ctx.strokeStyle = '#145a32';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x, y - size, size, size);
+  }
+
   function checkCollision(player, ob){
-    if(ob.type === 'block'){
+    if(ob.type === 'block' || ob.type === 'platform'){
       return !(player.x + player.width < ob.x ||
                player.x > ob.x + ob.width ||
                player.y + player.height < ob.y - ob.height ||
@@ -151,17 +161,42 @@
     player.velocityY += GRAVITY;
     player.y += player.velocityY;
 
-    if (player.y + player.height >= GROUND_Y) {
-      player.y = GROUND_Y - player.height;
-      player.velocityY = 0;
-      player.onGround = true;
+    // Reset onPlatform each frame
+    player.onPlatform = false;
+
+    // Check if player is standing on platform or ground
+    for(const ob of obstacles){
+      if(ob.type === 'platform'){
+        // Check if player is landing on top of platform
+        if(player.x + player.width > ob.x &&
+           player.x < ob.x + ob.width &&
+           player.y + player.height <= ob.y && // above platform top
+           player.y + player.height + player.velocityY >= ob.y - ob.height){
+          player.y = ob.y - ob.height - player.height;
+          player.velocityY = 0;
+          player.onGround = true;
+          player.onPlatform = true;
+        }
+      }
     }
 
+    // If not on platform, check if on ground
+    if(!player.onPlatform){
+      if (player.y + player.height >= GROUND_Y) {
+        player.y = GROUND_Y - player.height;
+        player.velocityY = 0;
+        player.onGround = true;
+      } else {
+        player.onGround = false;
+      }
+    }
+
+    // Move obstacles and check collisions (only spike & block are harmful)
     for (let i = obstacles.length - 1; i >= 0; i--) {
       const ob = obstacles[i];
       ob.x -= scrollSpeed;
 
-      if (checkCollision(player, ob)) {
+      if(!gameOver && (ob.type === 'spike' || ob.type === 'block') && checkCollision(player, ob)) {
         gameOver = true;
         if(score > highScore){
           highScore = score;
@@ -206,8 +241,10 @@
     for (const ob of obstacles) {
       if (ob.type === 'spike') {
         drawSpike(ob.x, ob.y, ob.width);
-      } else {
+      } else if(ob.type === 'block'){
         drawBlock(ob.x, ob.y, ob.width);
+      } else if(ob.type === 'platform'){
+        drawPlatform(ob.x, ob.y, ob.width);
       }
     }
 
@@ -230,7 +267,6 @@
   window.addEventListener('keydown', e => {
     if (e.code === 'Space' || e.code === 'ArrowUp') {
       if (!gameOver && player.onGround) {
-        // Bigger jump if score >= 4000
         player.velocityY = score >= 4000 ? JUMP_FORCE_HIGH_SCORE : JUMP_FORCE_INITIAL;
         player.onGround = false;
       } else if (gameOver) {
