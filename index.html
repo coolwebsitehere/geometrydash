@@ -31,14 +31,15 @@
   // Player config
   const PLAYER_SIZE = 30;
   const GRAVITY = 1;
-  const JUMP_FORCE = -14;
-  const MIN_GAP = 140;
-  const MAX_GAP = 250;
+  const JUMP_FORCE = -16; // slightly stronger jump
+  const MIN_GAP = 150;
+  const MAX_GAP = 280;
 
   // Game state
   let player, obstacles, scrollSpeed, score, highScore, gameOver;
   let obstacleTimer = 0;
   let obstacleInterval = 90;
+  let lastPatternType = null; // To avoid repeating patterns too often
 
   function initGame() {
     player = {
@@ -57,43 +58,50 @@
     obstacleTimer = 0;
     obstacleInterval = 90;
     highScore = parseInt(localStorage.getItem('gdHighScore')) || 0;
+    lastPatternType = null;
 
     // Spawn initial obstacles so screen isn't empty
     let startX = canvas.width + 50;
     for(let i=0; i<5; i++){
-      addRandomPattern(startX);
-      startX += 200;
+      startX = addRandomPattern(startX);
     }
   }
 
   // Add a random pattern of obstacles (1-3 spikes or 1-2 blocks)
+  // Avoid same pattern more than twice in a row
   function addRandomPattern(startX){
-    const rand = Math.random();
-    if(rand < 0.5){
-      // spikes 1-3
-      const count = 1 + Math.floor(Math.random()*3);
-      for(let i=0; i<count; i++){
-        obstacles.push({
-          x: startX + i*32,
-          y: GROUND_Y,
-          width: 30,
-          height: 30,
-          type: 'spike'
-        });
-      }
+    let patternType;
+    do {
+      patternType = Math.random() < 0.5 ? 'spike' : 'block';
+    } while(patternType === lastPatternType && Math.random() < 0.75); 
+    // 75% chance to avoid repeating same pattern twice in a row
+
+    lastPatternType = patternType;
+
+    let count;
+    if(patternType === 'spike'){
+      count = 1 + Math.floor(Math.random()*3); // 1 to 3 spikes
     } else {
-      // blocks 1-2
-      const count = 1 + Math.floor(Math.random()*2);
-      for(let i=0; i<count; i++){
-        obstacles.push({
-          x: startX + i*35,
-          y: GROUND_Y,
-          width: 30,
-          height: 30,
-          type: 'block'
-        });
-      }
+      count = 1 + Math.floor(Math.random()*2); // 1 to 2 blocks
     }
+
+    // Build the obstacles for this pattern
+    for(let i=0; i<count; i++){
+      obstacles.push({
+        x: startX + i * 35,
+        y: GROUND_Y,
+        width: 30,
+        height: 30,
+        type: patternType
+      });
+    }
+
+    // Add a larger gap after blocks for fair jumps
+    let gap = patternType === 'block' 
+      ? MIN_GAP + Math.random() * (MAX_GAP + 50 - MIN_GAP) // bigger max gap after blocks
+      : MIN_GAP + Math.random() * (MAX_GAP - MIN_GAP);
+
+    return startX + count * 35 + gap;
   }
 
   function drawSpike(x, y, size) {
@@ -111,20 +119,15 @@
     ctx.fillRect(x, y - size, size, size);
   }
 
-  // Improved collision check for player and obstacle
   function checkCollision(player, ob){
-    // Simple AABB collision for blocks (same as before)
     if(ob.type === 'block'){
       return !(player.x + player.width < ob.x ||
                player.x > ob.x + ob.width ||
                player.y + player.height < ob.y - ob.height ||
                player.y > ob.y);
     }
-    // For spikes, use bounding box slightly smaller vertically (because spike is a triangle)
     else if(ob.type === 'spike'){
-      // Spike hitbox adjusted to be a rectangle from base to peak (height = width)
-      const spikeTop = ob.y - ob.height; // y - 30
-      // Check bounding box collision with player
+      const spikeTop = ob.y - ob.height;
       return !(player.x + player.width < ob.x ||
                player.x > ob.x + ob.width ||
                player.y + player.height < spikeTop ||
@@ -163,13 +166,15 @@
       }
     }
 
-    // Add obstacles at intervals
+    // Add obstacles at intervals (use last obstacle's position to keep spacing fair)
     obstacleTimer++;
     if (obstacleTimer > obstacleInterval) {
       obstacleTimer = 0;
-      addRandomPattern(canvas.width + 10);
-      scrollSpeed += 0.05;
-      if(obstacleInterval > 45) obstacleInterval -= 1;
+      // Calculate next startX based on last obstacle
+      let lastX = obstacles.length ? obstacles[obstacles.length - 1].x : canvas.width + 10;
+      let nextX = addRandomPattern(lastX + 50);
+      scrollSpeed = Math.min(scrollSpeed + 0.03, 12);  // Cap max speed
+      obstacleInterval = Math.max(45, obstacleInterval - 0.3); // Min interval
     }
 
     score++;
