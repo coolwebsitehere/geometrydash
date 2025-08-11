@@ -31,14 +31,14 @@
   // Player config
   const PLAYER_SIZE = 30;
   const GRAVITY = 1;
-  const JUMP_FORCE = -14; // reduced jump
-  const MIN_GAP = 140;    // min distance between obstacles
-  const MAX_GAP = 250;    // max distance between obstacles
+  const JUMP_FORCE = -14;
+  const MIN_GAP = 140;
+  const MAX_GAP = 250;
 
   // Game state
   let player, obstacles, scrollSpeed, score, highScore, gameOver;
   let obstacleTimer = 0;
-  let obstacleInterval = 90; // frames between obstacles, decreases over time
+  let obstacleInterval = 90;
 
   function initGame() {
     player = {
@@ -57,46 +57,88 @@
     obstacleTimer = 0;
     obstacleInterval = 90;
     highScore = parseInt(localStorage.getItem('gdHighScore')) || 0;
+
+    // Spawn initial obstacles so screen isn't empty
+    let startX = canvas.width + 50;
+    for(let i=0; i<5; i++){
+      addRandomPattern(startX);
+      startX += 200;
+    }
   }
 
-  // Create obstacle of type 'spike' or 'block'
-  function createObstacle(type) {
-    const size = 30;
-    return {
-      x: canvas.width + 10,
-      y: GROUND_Y,
-      width: size,
-      height: size,
-      type,
-    };
+  // Add a random pattern of obstacles (1-3 spikes or 1-2 blocks)
+  function addRandomPattern(startX){
+    const rand = Math.random();
+    if(rand < 0.5){
+      // spikes 1-3
+      const count = 1 + Math.floor(Math.random()*3);
+      for(let i=0; i<count; i++){
+        obstacles.push({
+          x: startX + i*32,
+          y: GROUND_Y,
+          width: 30,
+          height: 30,
+          type: 'spike'
+        });
+      }
+    } else {
+      // blocks 1-2
+      const count = 1 + Math.floor(Math.random()*2);
+      for(let i=0; i<count; i++){
+        obstacles.push({
+          x: startX + i*35,
+          y: GROUND_Y,
+          width: 30,
+          height: 30,
+          type: 'block'
+        });
+      }
+    }
   }
 
-  // Draw a spike (triangle)
   function drawSpike(x, y, size) {
-    ctx.fillStyle = '#e74c3c'; // red
+    ctx.fillStyle = '#e74c3c';
     ctx.beginPath();
     ctx.moveTo(x, y);
-    ctx.lineTo(x + size/2, y - size);
+    ctx.lineTo(x + size / 2, y - size);
     ctx.lineTo(x + size, y);
     ctx.closePath();
     ctx.fill();
   }
 
-  // Draw a block (square)
   function drawBlock(x, y, size) {
-    ctx.fillStyle = '#c0392b'; // dark red
+    ctx.fillStyle = '#c0392b';
     ctx.fillRect(x, y - size, size, size);
   }
 
-  // Update game logic
+  // Improved collision check for player and obstacle
+  function checkCollision(player, ob){
+    // Simple AABB collision for blocks (same as before)
+    if(ob.type === 'block'){
+      return !(player.x + player.width < ob.x ||
+               player.x > ob.x + ob.width ||
+               player.y + player.height < ob.y - ob.height ||
+               player.y > ob.y);
+    }
+    // For spikes, use bounding box slightly smaller vertically (because spike is a triangle)
+    else if(ob.type === 'spike'){
+      // Spike hitbox adjusted to be a rectangle from base to peak (height = width)
+      const spikeTop = ob.y - ob.height; // y - 30
+      // Check bounding box collision with player
+      return !(player.x + player.width < ob.x ||
+               player.x > ob.x + ob.width ||
+               player.y + player.height < spikeTop ||
+               player.y > ob.y);
+    }
+    return false;
+  }
+
   function update() {
     if (gameOver) return;
 
-    // Gravity
     player.velocityY += GRAVITY;
     player.y += player.velocityY;
 
-    // Ground collision
     if (player.y + player.height >= GROUND_Y) {
       player.y = GROUND_Y - player.height;
       player.velocityY = 0;
@@ -104,16 +146,11 @@
     }
 
     // Move obstacles and check collisions
-    for (let i = obstacles.length -1; i >=0; i--) {
+    for (let i = obstacles.length - 1; i >= 0; i--) {
       const ob = obstacles[i];
       ob.x -= scrollSpeed;
 
-      if (
-        player.x < ob.x + ob.width &&
-        player.x + player.width > ob.x &&
-        player.y < ob.y &&
-        player.y + player.height > ob.y - ob.height
-      ) {
+      if (checkCollision(player, ob)) {
         gameOver = true;
         if(score > highScore){
           highScore = score;
@@ -121,67 +158,35 @@
         }
       }
 
-      // Remove off-screen obstacles
       if (ob.x + ob.width < 0) {
         obstacles.splice(i, 1);
       }
     }
 
-    // Add obstacles at intervals with randomness & fairness
+    // Add obstacles at intervals
     obstacleTimer++;
     if (obstacleTimer > obstacleInterval) {
       obstacleTimer = 0;
-      // Randomly choose spikes or blocks:
-      // Also sometimes multiple spikes for challenge but within gap limits
-      const rand = Math.random();
-      if(rand < 0.5){
-        // spikes 1-3 in a row
-        const count = 1 + Math.floor(Math.random()*3);
-        for(let i=0; i<count; i++){
-          obstacles.push({
-            x: canvas.width + i*32,
-            y: GROUND_Y,
-            width: 30,
-            height: 30,
-            type: 'spike'
-          });
-        }
-      } else {
-        // blocks 1-2 in a row
-        const count = 1 + Math.floor(Math.random()*2);
-        for(let i=0; i<count; i++){
-          obstacles.push({
-            x: canvas.width + i*35,
-            y: GROUND_Y,
-            width: 30,
-            height: 30,
-            type: 'block'
-          });
-        }
-      }
-
-      // Gradually increase difficulty
+      addRandomPattern(canvas.width + 10);
       scrollSpeed += 0.05;
       if(obstacleInterval > 45) obstacleInterval -= 1;
     }
 
-    // Increase score
     score++;
   }
 
-  // Draw game objects
   function draw() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Draw ground
+    // Ground
     ctx.fillStyle = '#95a5a6';
     ctx.fillRect(0, GROUND_Y, canvas.width, 20);
 
-    // Draw player
+    // Player
     ctx.fillStyle = '#2c3e50';
     ctx.fillRect(player.x, player.y, player.width, player.height);
 
-    // Draw obstacles
+    // Obstacles
     for (const ob of obstacles) {
       if (ob.type === 'spike') {
         drawSpike(ob.x, ob.y, ob.width);
@@ -190,47 +195,42 @@
       }
     }
 
-    // Draw Score & High Score
+    // Score & High Score
     ctx.fillStyle = '#2c3e50';
     ctx.font = '20px Arial';
     ctx.textAlign = 'left';
     ctx.fillText(`Score: ${score}`, 10, 30);
     ctx.fillText(`High Score: ${highScore}`, 10, 60);
 
-    // Game Over text
     if (gameOver) {
       ctx.fillStyle = '#e74c3c';
       ctx.font = '40px Arial';
       ctx.textAlign = 'center';
-      ctx.fillText('Game Over', canvas.width/2, canvas.height/2 - 20);
+      ctx.fillText('Game Over', canvas.width / 2, canvas.height / 2 - 20);
       ctx.font = '20px Arial';
-      ctx.fillText('Press Space or Up to Restart', canvas.width/2, canvas.height/2 + 20);
+      ctx.fillText('Press Space or Up to Restart', canvas.width / 2, canvas.height / 2 + 20);
     }
   }
 
-  // Game loop
   function loop() {
     update();
     draw();
     requestAnimationFrame(loop);
   }
 
-  // Controls
   window.addEventListener('keydown', e => {
-    if(e.code === 'Space' || e.code === 'ArrowUp'){
-      if(!gameOver && player.onGround){
+    if (e.code === 'Space' || e.code === 'ArrowUp') {
+      if (!gameOver && player.onGround) {
         player.velocityY = JUMP_FORCE;
         player.onGround = false;
-      } else if(gameOver){
+      } else if (gameOver) {
         initGame();
       }
     }
   });
 
-  // Start game
   initGame();
   loop();
-
 })();
 </script>
 </body>
