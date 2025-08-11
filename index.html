@@ -31,26 +31,38 @@
   // Player config
   const PLAYER_SIZE = 30;
   const GRAVITY = 1;
-  const JUMP_FORCE = -16; // slightly stronger jump
+  const JUMP_FORCE_INITIAL = -18;
+  const JUMP_FORCE_HIGH_SCORE = -20; // Bigger jump after 4000 score
 
   // Game state
   let player, obstacles, scrollSpeed, score, highScore, gameOver;
   let patternIndex = 0;
 
-  // Predefined pattern sequence of 10 obstacle sets
-  // Each pattern is an object: { type: 'spike'|'block'|'gap', count: number, gapAfter: number }
-  // gapAfter is space after the pattern to next one, in pixels
-  const patternSequence = [
-    { type: 'spike', count: 1, gapAfter: 180 },
-    { type: 'gap', count: 0, gapAfter: 220 },
-    { type: 'block', count: 1, gapAfter: 200 },
-    { type: 'spike', count: 2, gapAfter: 240 },
-    { type: 'gap', count: 0, gapAfter: 200 },
-    { type: 'block', count: 2, gapAfter: 260 },
-    { type: 'spike', count: 1, gapAfter: 180 },
-    { type: 'gap', count: 0, gapAfter: 220 },
-    { type: 'block', count: 1, gapAfter: 200 },
-    { type: 'spike', count: 3, gapAfter: 280 },
+  // Pattern sequences for normal and high score
+  const patternSequenceNormal = [
+    { type: 'spike', count: 1, gapAfter: 220 },
+    { type: 'gap', count: 0, gapAfter: 260 },
+    { type: 'block', count: 1, gapAfter: 240 },
+    { type: 'spike', count: 2, gapAfter: 280 },
+    { type: 'gap', count: 0, gapAfter: 260 },
+    { type: 'block', count: 2, gapAfter: 300 },
+    { type: 'spike', count: 1, gapAfter: 220 },
+    { type: 'gap', count: 0, gapAfter: 260 },
+    { type: 'block', count: 1, gapAfter: 240 },
+    { type: 'spike', count: 2, gapAfter: 300 },
+  ];
+
+  const patternSequenceHighScore = [
+    { type: 'spike', count: 1, gapAfter: 220 },
+    { type: 'gap', count: 0, gapAfter: 260 },
+    { type: 'block', count: 1, gapAfter: 240 },
+    { type: 'spike', count: 3, gapAfter: 320 }, // 3 spikes allowed after 4000
+    { type: 'gap', count: 0, gapAfter: 260 },
+    { type: 'block', count: 2, gapAfter: 300 },
+    { type: 'spike', count: 2, gapAfter: 280 },
+    { type: 'gap', count: 0, gapAfter: 260 },
+    { type: 'block', count: 1, gapAfter: 240 },
+    { type: 'spike', count: 3, gapAfter: 320 },
   ];
 
   function initGame() {
@@ -77,13 +89,14 @@
     }
   }
 
-  // Add the next pattern from sequence at startX, returns new X position after adding obstacles + gap
   function addPattern(startX){
-    const pattern = patternSequence[patternIndex];
-    patternIndex = (patternIndex + 1) % patternSequence.length;
+    // Choose sequence based on score
+    const patterns = (score >= 4000) ? patternSequenceHighScore : patternSequenceNormal;
+
+    const pattern = patterns[patternIndex];
+    patternIndex = (patternIndex + 1) % patterns.length;
 
     if(pattern.type === 'gap'){
-      // Just a gap, no obstacles
       return startX + pattern.gapAfter;
     }
 
@@ -144,7 +157,6 @@
       player.onGround = true;
     }
 
-    // Move obstacles and check collisions
     for (let i = obstacles.length - 1; i >= 0; i--) {
       const ob = obstacles[i];
       ob.x -= scrollSpeed;
@@ -162,9 +174,7 @@
       }
     }
 
-    // Add patterns when last obstacle is nearing screen edge
     if(obstacles.length === 0){
-      // No obstacles yet? Spawn some
       let startX = canvas.width + 50;
       for(let i=0; i<3; i++){
         startX = addPattern(startX);
@@ -172,13 +182,11 @@
     } else {
       const lastObstacle = obstacles[obstacles.length - 1];
       if(lastObstacle.x < canvas.width - 300){
-        // Add next pattern when last obstacle is far enough left
-        let newStartX = lastObstacle.x + 150;
+        let newStartX = lastObstacle.x + 180;
         addPattern(newStartX);
       }
     }
 
-    // Increase speed every 500 points slightly
     if(score > 0 && score % 500 === 0){
       scrollSpeed = Math.min(scrollSpeed + 0.2, 12);
     }
@@ -189,15 +197,12 @@
   function draw() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Ground
     ctx.fillStyle = '#95a5a6';
     ctx.fillRect(0, GROUND_Y, canvas.width, 20);
 
-    // Player
     ctx.fillStyle = '#2c3e50';
     ctx.fillRect(player.x, player.y, player.width, player.height);
 
-    // Obstacles
     for (const ob of obstacles) {
       if (ob.type === 'spike') {
         drawSpike(ob.x, ob.y, ob.width);
@@ -206,7 +211,6 @@
       }
     }
 
-    // Score & High Score
     ctx.fillStyle = '#2c3e50';
     ctx.font = '20px Arial';
     ctx.textAlign = 'left';
@@ -223,16 +227,11 @@
     }
   }
 
-  function loop() {
-    update();
-    draw();
-    requestAnimationFrame(loop);
-  }
-
   window.addEventListener('keydown', e => {
     if (e.code === 'Space' || e.code === 'ArrowUp') {
       if (!gameOver && player.onGround) {
-        player.velocityY = JUMP_FORCE;
+        // Bigger jump if score >= 4000
+        player.velocityY = score >= 4000 ? JUMP_FORCE_HIGH_SCORE : JUMP_FORCE_INITIAL;
         player.onGround = false;
       } else if (gameOver) {
         initGame();
@@ -242,6 +241,12 @@
 
   initGame();
   loop();
+
+  function loop() {
+    update();
+    draw();
+    requestAnimationFrame(loop);
+  }
 })();
 </script>
 </body>
