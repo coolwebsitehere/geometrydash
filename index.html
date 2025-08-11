@@ -39,9 +39,6 @@
   const JUMP_MIN_FORCE = -18;
   const JUMP_INITIAL_DECREASE_LIMIT = 2500;
 
-  const MIN_GAP = 140;
-  const MAX_GAP = 250;
-
   // Game state
   let player, obstacles, scrollSpeed, score, highScore, gameOver, youWin;
   let obstacleTimer = 0;
@@ -50,13 +47,13 @@
   // Pattern setup
   let patternIndex = 0;
   const patterns = [
-    // each pattern is an array of obstacles (type and count)
-    [{type:'spike', count:1}],
-    [{type:'spike', count:2}],
-    [{type:'block', count:1}],
-    [{type:'block', count:2}],
-    [{type:'platform', count:1}],  // safe platform
-    [{type:'spike', count:3}], // only allowed after score 4000
+    // each pattern is an array of obstacles (type and count) and spacing
+    [{type:'spike', count:1, spacing: 35}],
+    [{type:'spike', count:2, spacing: 40}],
+    [{type:'block', count:1, spacing: 35}],
+    [{type:'block', count:2, spacing: 40}],
+    [{type:'platform', count:1, spacing: 80}],  // safe platform
+    [{type:'spike', count:3, spacing: 35}], // only after score 4000
   ];
 
   function initGame() {
@@ -85,14 +82,14 @@
     let startX = canvas.width + 50;
     for(let i=0; i<5; i++){
       addPattern(startX);
-      startX += 200;
+      startX += 220; // base spacing between patterns
     }
   }
 
   function addPattern(startX){
     // control pattern choice so 3 spikes only after score >=4000
-    let availablePatterns = patterns.slice(0, 5); // first 5 patterns always available
-    if(score >= 4000) availablePatterns.push(patterns[5]); // add triple spikes pattern
+    let availablePatterns = patterns.slice(0, 5);
+    if(score >= 4000) availablePatterns.push(patterns[5]);
 
     let pattern = availablePatterns[patternIndex % availablePatterns.length];
     patternIndex++;
@@ -100,15 +97,21 @@
     for(let i=0; i<pattern.length; i++){
       const pat = pattern[i];
       for(let c=0; c<pat.count; c++){
+        // Check no obstacle already too close to this spawn x to avoid overlap
+        let spawnX = startX + c * pat.spacing;
+        if(obstacles.some(o => Math.abs(o.x - spawnX) < 30)){
+          // if too close, shift this spawnX forward by 40 pixels
+          spawnX += 40;
+        }
         obstacles.push({
-          x: startX + c * 35,
+          x: spawnX,
           y: GROUND_Y,
           width: 30,
           height: 30,
           type: pat.type
         });
       }
-      startX += (pat.count * 35) + 80; // add spacing between groups in pattern
+      startX += (pat.count * pat.spacing) + 100; // add spacing between groups in pattern
     }
   }
 
@@ -132,7 +135,7 @@
     ctx.fillRect(x, y - size, size, size / 4); // thin platform
   }
 
-  // Improved collision check for player and obstacle
+  // Collision with platform: safe on top, death on side or bottom
   function checkCollision(player, ob){
     if(ob.type === 'block'){
       // Full rectangle collision
@@ -150,11 +153,13 @@
                player.y > ob.y);
     }
     else if(ob.type === 'platform'){
-      // Platform: only collide if player lands on top (allow hitting top but not sides)
       const platformTop = ob.y - ob.height / 4; // platform height is height/4
       const platformLeft = ob.x;
       const platformRight = ob.x + ob.width;
+      const platformBottom = ob.y;
+
       const playerBottom = player.y + player.height;
+      const playerTop = player.y;
       const playerRight = player.x + player.width;
       const playerLeft = player.x;
 
@@ -163,15 +168,24 @@
       const falling = player.velocityY >= 0;
 
       if(onTop && withinX && falling){
-        // snap player to platform top
+        // Landed safely on top
         player.y = platformTop - player.height;
         player.velocityY = 0;
         player.onGround = true;
-        return false; // platform safe, no death
+        return false; // no death
       }
 
-      // no collision from sides or bottom
-      return false;
+      // Check if player hits sides or bottom of platform
+      const hitLeftSide = playerRight > platformLeft && playerLeft < platformLeft && playerBottom > platformTop;
+      const hitRightSide = playerLeft < platformRight && playerRight > platformRight && playerBottom > platformTop;
+      const hitBottom = playerTop < platformBottom && playerBottom > platformBottom && playerRight > platformLeft && playerLeft < platformRight;
+
+      if(hitLeftSide || hitRightSide || hitBottom){
+        // Colliding with platform side or bottom = death
+        return true;
+      }
+
+      return false; // no collision
     }
     return false;
   }
@@ -210,14 +224,13 @@
       ob.x -= scrollSpeed;
 
       if(checkCollision(player, ob)){
-        if(ob.type === 'spike' || ob.type === 'block'){
+        if(ob.type === 'spike' || ob.type === 'block' || ob.type === 'platform'){
           gameOver = true;
           if(score > highScore){
             highScore = score;
             localStorage.setItem('gdHighScore', highScore);
           }
         }
-        // platform safe, no death
       }
 
       if(ob.x + ob.width < 0){
