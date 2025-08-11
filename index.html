@@ -1,152 +1,237 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Endless Dash</title>
-  <style>
-    body {
-      margin: 0;
-      overflow: hidden;
-      background-color: white;
-    }
-    canvas {
-      display: block;
-      margin: 0 auto;
-      background: #ffffff;
-    }
-  </style>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Geometry Dash Inspired Endless Runner</title>
+<style>
+  body {
+    margin: 0;
+    overflow: hidden;
+    background: #f0f0f0;
+    font-family: Arial, sans-serif;
+  }
+  canvas {
+    display: block;
+    margin: 0 auto;
+    background: #fff;
+    box-shadow: 0 0 10px #aaa;
+  }
+</style>
 </head>
 <body>
-  <canvas id="gameCanvas" width="800" height="400"></canvas>
-  <script>
-    const canvas = document.getElementById("gameCanvas");
-    const ctx = canvas.getContext("2d");
+<canvas id="game" width="800" height="400"></canvas>
+<script>
+(() => {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
 
-    // Game constants
-    const obstacleSpacing = 200;
-    const baseSpeed = 5;
+  const GROUND_Y = canvas.height - 20;
 
-    // Game state
-    let player, obstacles, scrollSpeed, score, gameOver;
+  // Player config
+  const PLAYER_SIZE = 30;
+  const GRAVITY = 1;
+  const JUMP_FORCE = -14;
+  const MIN_GAP = 140;
+  const MAX_GAP = 250;
 
-    function initGame() {
-      player = {
-        x: 100,
-        y: 0,
-        width: 40,
-        height: 40,
-        velocityY: 0,
-        gravity: 1,
-        jumpForce: -15,
-        onGround: false
-      };
+  // Game state
+  let player, obstacles, scrollSpeed, score, highScore, gameOver;
+  let obstacleTimer = 0;
+  let obstacleInterval = 90;
 
-      obstacles = [];
-      scrollSpeed = baseSpeed;
-      score = 0;
-      gameOver = false;
+  function initGame() {
+    player = {
+      x: 100,
+      y: GROUND_Y - PLAYER_SIZE,
+      width: PLAYER_SIZE,
+      height: PLAYER_SIZE,
+      velocityY: 0,
+      onGround: true,
+    };
 
-      for (let i = 600; i <= 1000; i += obstacleSpacing) {
-        obstacles.push(createObstacle(i));
+    obstacles = [];
+    scrollSpeed = 5;
+    score = 0;
+    gameOver = false;
+    obstacleTimer = 0;
+    obstacleInterval = 90;
+    highScore = parseInt(localStorage.getItem('gdHighScore')) || 0;
+
+    // Spawn initial obstacles so screen isn't empty
+    let startX = canvas.width + 50;
+    for(let i=0; i<5; i++){
+      addRandomPattern(startX);
+      startX += 200;
+    }
+  }
+
+  // Add a random pattern of obstacles (1-3 spikes or 1-2 blocks)
+  function addRandomPattern(startX){
+    const rand = Math.random();
+    if(rand < 0.5){
+      // spikes 1-3
+      const count = 1 + Math.floor(Math.random()*3);
+      for(let i=0; i<count; i++){
+        obstacles.push({
+          x: startX + i*32,
+          y: GROUND_Y,
+          width: 30,
+          height: 30,
+          type: 'spike'
+        });
+      }
+    } else {
+      // blocks 1-2
+      const count = 1 + Math.floor(Math.random()*2);
+      for(let i=0; i<count; i++){
+        obstacles.push({
+          x: startX + i*35,
+          y: GROUND_Y,
+          width: 30,
+          height: 30,
+          type: 'block'
+        });
       }
     }
+  }
 
-    function createObstacle(x) {
-      return { x, y: canvas.height - 40, width: 40, height: 40 };
+  function drawSpike(x, y, size) {
+    ctx.fillStyle = '#e74c3c';
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + size / 2, y - size);
+    ctx.lineTo(x + size, y);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  function drawBlock(x, y, size) {
+    ctx.fillStyle = '#c0392b';
+    ctx.fillRect(x, y - size, size, size);
+  }
+
+  // Improved collision check for player and obstacle
+  function checkCollision(player, ob){
+    // Simple AABB collision for blocks (same as before)
+    if(ob.type === 'block'){
+      return !(player.x + player.width < ob.x ||
+               player.x > ob.x + ob.width ||
+               player.y + player.height < ob.y - ob.height ||
+               player.y > ob.y);
+    }
+    // For spikes, use bounding box slightly smaller vertically (because spike is a triangle)
+    else if(ob.type === 'spike'){
+      // Spike hitbox adjusted to be a rectangle from base to peak (height = width)
+      const spikeTop = ob.y - ob.height; // y - 30
+      // Check bounding box collision with player
+      return !(player.x + player.width < ob.x ||
+               player.x > ob.x + ob.width ||
+               player.y + player.height < spikeTop ||
+               player.y > ob.y);
+    }
+    return false;
+  }
+
+  function update() {
+    if (gameOver) return;
+
+    player.velocityY += GRAVITY;
+    player.y += player.velocityY;
+
+    if (player.y + player.height >= GROUND_Y) {
+      player.y = GROUND_Y - player.height;
+      player.velocityY = 0;
+      player.onGround = true;
     }
 
-    window.addEventListener("keydown", (e) => {
-      if (e.code === "Space") {
-        if (!gameOver && player.onGround) {
-          player.velocityY = player.jumpForce;
-          player.onGround = false;
-        } else if (gameOver) {
-          initGame(); // Retry
+    // Move obstacles and check collisions
+    for (let i = obstacles.length - 1; i >= 0; i--) {
+      const ob = obstacles[i];
+      ob.x -= scrollSpeed;
+
+      if (checkCollision(player, ob)) {
+        gameOver = true;
+        if(score > highScore){
+          highScore = score;
+          localStorage.setItem('gdHighScore', highScore);
         }
       }
-    });
 
-    function update() {
-      if (gameOver) return;
-
-      // Gravity
-      player.velocityY += player.gravity;
-      player.y += player.velocityY;
-
-      // Ground collision
-      if (player.y + player.height >= canvas.height) {
-        player.y = canvas.height - player.height;
-        player.velocityY = 0;
-        player.onGround = true;
-      }
-
-      // Move obstacles
-      for (let obs of obstacles) {
-        obs.x -= scrollSpeed;
-
-        // Collision
-        if (
-          player.x < obs.x + obs.width &&
-          player.x + player.width > obs.x &&
-          player.y < obs.y + obs.height &&
-          player.y + player.height > obs.y
-        ) {
-          gameOver = true;
-        }
-      }
-
-      // Add new obstacles
-      if (obstacles.length > 0 && obstacles[0].x + obstacles[0].width < 0) {
-        obstacles.shift();
-        let lastX = obstacles[obstacles.length - 1].x;
-        obstacles.push(createObstacle(lastX + obstacleSpacing));
-      }
-
-      // Score & speed increase
-      score++;
-      if (score % 300 === 0) {
-        scrollSpeed += 0.5;
+      if (ob.x + ob.width < 0) {
+        obstacles.splice(i, 1);
       }
     }
 
-    function draw() {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    // Add obstacles at intervals
+    obstacleTimer++;
+    if (obstacleTimer > obstacleInterval) {
+      obstacleTimer = 0;
+      addRandomPattern(canvas.width + 10);
+      scrollSpeed += 0.05;
+      if(obstacleInterval > 45) obstacleInterval -= 1;
+    }
 
-      // Player
-      ctx.fillStyle = "#000000";
-      ctx.fillRect(player.x, player.y, player.width, player.height);
+    score++;
+  }
 
-      // Obstacles
-      ctx.fillStyle = "#ff0000";
-      for (let obs of obstacles) {
-        ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
-      }
+  function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      // Score
-      ctx.fillStyle = "#000000";
-      ctx.font = "20px Arial";
-      ctx.fillText("Score: " + score, 10, 30);
+    // Ground
+    ctx.fillStyle = '#95a5a6';
+    ctx.fillRect(0, GROUND_Y, canvas.width, 20);
 
-      // Game Over
-      if (gameOver) {
-        ctx.fillStyle = "black";
-        ctx.font = "36px Arial";
-        ctx.fillText("Game Over", canvas.width / 2 - 90, canvas.height / 2 - 10);
-        ctx.font = "20px Arial";
-        ctx.fillText("Press SPACE to retry", canvas.width / 2 - 100, canvas.height / 2 + 30);
+    // Player
+    ctx.fillStyle = '#2c3e50';
+    ctx.fillRect(player.x, player.y, player.width, player.height);
+
+    // Obstacles
+    for (const ob of obstacles) {
+      if (ob.type === 'spike') {
+        drawSpike(ob.x, ob.y, ob.width);
+      } else {
+        drawBlock(ob.x, ob.y, ob.width);
       }
     }
 
-    function loop() {
-      update();
-      draw();
-      requestAnimationFrame(loop);
-    }
+    // Score & High Score
+    ctx.fillStyle = '#2c3e50';
+    ctx.font = '20px Arial';
+    ctx.textAlign = 'left';
+    ctx.fillText(`Score: ${score}`, 10, 30);
+    ctx.fillText(`High Score: ${highScore}`, 10, 60);
 
-    // Start
-    initGame();
-    loop();
-  </script>
+    if (gameOver) {
+      ctx.fillStyle = '#e74c3c';
+      ctx.font = '40px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('Game Over', canvas.width / 2, canvas.height / 2 - 20);
+      ctx.font = '20px Arial';
+      ctx.fillText('Press Space or Up to Restart', canvas.width / 2, canvas.height / 2 + 20);
+    }
+  }
+
+  function loop() {
+    update();
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  window.addEventListener('keydown', e => {
+    if (e.code === 'Space' || e.code === 'ArrowUp') {
+      if (!gameOver && player.onGround) {
+        player.velocityY = JUMP_FORCE;
+        player.onGround = false;
+      } else if (gameOver) {
+        initGame();
+      }
+    }
+  });
+
+  initGame();
+  loop();
+})();
+</script>
 </body>
 </html>
