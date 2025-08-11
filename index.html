@@ -28,32 +28,27 @@
 
   const GROUND_Y = canvas.height - 20;
 
-  // Player config
   const PLAYER_SIZE = 30;
   const GRAVITY = 1;
 
-  // Jump parameters
-  let jumpForce = -20; // start jump force
+  let jumpForce = -20;
   const JUMP_DECREASE_STEP = 0.5;
   const JUMP_DECREASE_SCORE_INTERVAL = 1500;
   const JUMP_MIN_FORCE = -18;
   const JUMP_INITIAL_DECREASE_LIMIT = 2500;
 
-  // Game state
   let player, obstacles, scrollSpeed, score, highScore, gameOver, youWin;
   let obstacleTimer = 0;
   let obstacleInterval = 90;
 
-  // Pattern setup
   let patternIndex = 0;
   const patterns = [
-    // each pattern is an array of obstacles (type and count) and spacing
     [{type:'spike', count:1, spacing: 35}],
     [{type:'spike', count:2, spacing: 40}],
     [{type:'block', count:1, spacing: 35}],
     [{type:'block', count:2, spacing: 40}],
-    [{type:'platform', count:1, spacing: 80}],  // safe platform
-    [{type:'spike', count:3, spacing: 35}], // only after score 4000
+    [{type:'platform', count:1, spacing: 80}],
+    [{type:'spike', count:3, spacing: 35}],
   ];
 
   function initGame() {
@@ -78,40 +73,56 @@
 
     highScore = parseInt(localStorage.getItem('gdHighScore')) || 0;
 
-    // Spawn initial obstacles so screen isn't empty
     let startX = canvas.width + 50;
     for(let i=0; i<5; i++){
       addPattern(startX);
-      startX += 220; // base spacing between patterns
+      startX += 220;
     }
   }
 
+  // Check if proposedX overlaps with any existing obstacle (with buffer)
+  function isOverlapping(proposedX) {
+    const buffer = 5;
+    for(let ob of obstacles){
+      if(Math.abs(ob.x - proposedX) < ob.width + buffer){
+        return true;
+      }
+    }
+    return false;
+  }
+
   function addPattern(startX){
-    // control pattern choice so 3 spikes only after score >=4000
+    // Determine available patterns based on score
     let availablePatterns = patterns.slice(0, 5);
     if(score >= 4000) availablePatterns.push(patterns[5]);
 
     let pattern = availablePatterns[patternIndex % availablePatterns.length];
     patternIndex++;
 
+    let currentX = startX;
+
     for(let i=0; i<pattern.length; i++){
       const pat = pattern[i];
       for(let c=0; c<pat.count; c++){
-        // Check no obstacle already too close to this spawn x to avoid overlap
-        let spawnX = startX + c * pat.spacing;
-        if(obstacles.some(o => Math.abs(o.x - spawnX) < 30)){
-          // if too close, shift this spawnX forward by 40 pixels
-          spawnX += 40;
+        let proposedX = currentX;
+
+        // Shift proposedX forward until no overlap
+        while(isOverlapping(proposedX)){
+          proposedX += 10;
         }
+
         obstacles.push({
-          x: spawnX,
+          x: proposedX,
           y: GROUND_Y,
           width: 30,
           height: 30,
           type: pat.type
         });
+
+        currentX = proposedX + pat.spacing;
       }
-      startX += (pat.count * pat.spacing) + 100; // add spacing between groups in pattern
+      // Add extra spacing between groups in pattern
+      currentX += 100;
     }
   }
 
@@ -131,21 +142,18 @@
   }
 
   function drawPlatform(x, y, size) {
-    ctx.fillStyle = '#3498db'; // blue platform
-    ctx.fillRect(x, y - size, size, size / 4); // thin platform
+    ctx.fillStyle = '#3498db';
+    ctx.fillRect(x, y - size, size, size / 4);
   }
 
-  // Collision with platform: safe on top, death on side or bottom
   function checkCollision(player, ob){
     if(ob.type === 'block'){
-      // Full rectangle collision
       return !(player.x + player.width < ob.x ||
                player.x > ob.x + ob.width ||
                player.y + player.height < ob.y - ob.height ||
                player.y > ob.y);
     }
     else if(ob.type === 'spike'){
-      // Spike hitbox adjusted rectangle
       const spikeTop = ob.y - ob.height;
       return !(player.x + player.width < ob.x ||
                player.x > ob.x + ob.width ||
@@ -153,7 +161,7 @@
                player.y > ob.y);
     }
     else if(ob.type === 'platform'){
-      const platformTop = ob.y - ob.height / 4; // platform height is height/4
+      const platformTop = ob.y - ob.height / 4;
       const platformLeft = ob.x;
       const platformRight = ob.x + ob.width;
       const platformBottom = ob.y;
@@ -168,24 +176,21 @@
       const falling = player.velocityY >= 0;
 
       if(onTop && withinX && falling){
-        // Landed safely on top
         player.y = platformTop - player.height;
         player.velocityY = 0;
         player.onGround = true;
-        return false; // no death
+        return false;
       }
 
-      // Check if player hits sides or bottom of platform
       const hitLeftSide = playerRight > platformLeft && playerLeft < platformLeft && playerBottom > platformTop;
       const hitRightSide = playerLeft < platformRight && playerRight > platformRight && playerBottom > platformTop;
       const hitBottom = playerTop < platformBottom && playerBottom > platformBottom && playerRight > platformLeft && playerLeft < platformRight;
 
       if(hitLeftSide || hitRightSide || hitBottom){
-        // Colliding with platform side or bottom = death
         return true;
       }
 
-      return false; // no collision
+      return false;
     }
     return false;
   }
@@ -193,14 +198,12 @@
   function update() {
     if(gameOver || youWin) return;
 
-    // Win check
     if(score >= 10000){
       youWin = true;
       gameOver = true;
       return;
     }
 
-    // Adjust jump force as score increases
     if(score < JUMP_INITIAL_DECREASE_LIMIT){
       jumpForce = -20;
     } else {
@@ -211,14 +214,12 @@
     player.velocityY += GRAVITY;
     player.y += player.velocityY;
 
-    // Ground collision
     if(player.y + player.height >= GROUND_Y){
       player.y = GROUND_Y - player.height;
       player.velocityY = 0;
       player.onGround = true;
     }
 
-    // Move obstacles and check collisions
     for(let i = obstacles.length - 1; i >= 0; i--){
       const ob = obstacles[i];
       ob.x -= scrollSpeed;
@@ -238,7 +239,6 @@
       }
     }
 
-    // Add obstacles at intervals
     obstacleTimer++;
     if(obstacleTimer > obstacleInterval){
       obstacleTimer = 0;
@@ -253,15 +253,12 @@
   function draw() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Ground
     ctx.fillStyle = '#95a5a6';
     ctx.fillRect(0, GROUND_Y, canvas.width, 20);
 
-    // Player
     ctx.fillStyle = '#2c3e50';
     ctx.fillRect(player.x, player.y, player.width, player.height);
 
-    // Obstacles
     for(const ob of obstacles){
       if(ob.type === 'spike'){
         drawSpike(ob.x, ob.y, ob.width);
@@ -272,7 +269,6 @@
       }
     }
 
-    // Score & High Score
     ctx.fillStyle = '#2c3e50';
     ctx.font = '20px Arial';
     ctx.textAlign = 'left';
@@ -290,7 +286,7 @@
 
     if(youWin){
       const alpha = 0.5 + 0.5 * Math.sin(Date.now() / 200);
-      ctx.fillStyle = `rgba(46, 204, 113, ${alpha})`; // green flashing
+      ctx.fillStyle = `rgba(46, 204, 113, ${alpha})`;
       ctx.font = '50px Arial';
       ctx.textAlign = 'center';
       ctx.fillText('You Win!', canvas.width / 2, canvas.height / 2);
