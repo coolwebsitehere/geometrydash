@@ -1,347 +1,282 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Geometry Dash</title>
 <style>
-  html,body { height:100%; margin:0; background:#222; }
-  body { display:flex; align-items:center; justify-content:center; font-family:Arial,Helvetica,sans-serif; }
-  canvas { background:#fff; box-shadow:0 8px 30px rgba(0,0,0,0.4); display:block; }
+  body {
+    margin: 0;
+    overflow: hidden;
+    font-family: Arial, sans-serif;
+  }
+  canvas {
+    display: block;
+    margin: 0 auto;
+    background: #fff;
+    box-shadow: 0 0 10px #aaa;
+  }
 </style>
 </head>
 <body>
-<canvas id="game" width="900" height="500"></canvas>
+<canvas id="game" width="800" height="400"></canvas>
 <script>
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
 
-  // ---- Settings / tuning ----
-  const GROUND_Y = canvas.height - 60;
-  const PLAYER_SIZE = 32;
-  const GRAVITY = 1.2;
-  let JUMP_FORCE = -16;         // slightly smaller jump (negative)
-  const START_SPEED = 7;        // start a bit faster
-  const SPEED_INCREASE_PER_500 = 0.5;
-  const WIN_SCORE = 10000;
-  // patterns are arrays of items: {type:'block'|'spike', xOffset}
-  const PATTERNS = [
-    // pattern 0: single block
-    [{type:'block', x:0}],
-    // pattern 1: single spike, then block (safe gap)
-    [{type:'spike', x:0},{type:'block', x:70}],
-    // pattern 2: double block (small gap)
-    [{type:'block', x:0},{type:'block', x:90}],
-    // pattern 3: spike, spike (twin spikes)
-    [{type:'spike', x:0},{type:'spike', x:48}],
-    // pattern 4: block, spike, block (longer pattern)
-    [{type:'block', x:0},{type:'spike', x:84},{type:'block', x:168}],
-  ];
-  const PATTERN_GAP_BASE = 260; // base pixels added after a pattern
-  const PATTERN_GAP_VARIATION = 140; // added random range
+  const GROUND_Y = canvas.height - 20;
+  const PLAYER_SIZE = 30;
+  const GRAVITY = 1;
 
-  // background palette (will cycle)
-  const BG_PALETTE = ['#f0f0f0','#ffdfe6','#e6ffd9','#e6f0ff','#fff7e6','#f2e6ff','#e6fff8','#f0f4f8'];
+  // Jump config
+  let jumpForce = -18;
+  const JUMP_INITIAL_FORCE = -18;
+  const JUMP_DECREASE_STEP = 0.5;
+  const JUMP_DECREASE_SCORE_INTERVAL = 1500;
+  const JUMP_MIN_FORCE = -15;
+  const JUMP_INITIAL_DECREASE_LIMIT = 2500;
 
-  // ---- game state ----
-  let player, obstacles, scrollSpeed, score, highScore, gameOver, youWin;
+  // Speed & difficulty
+  let scrollSpeed = 6;
+  const SPEED_INCREMENT = 0.05;
+  const OBSTACLE_INTERVAL_START = 90;
+  const OBSTACLE_INTERVAL_MIN = 45;
+
+  // Colors for background cycling
+  const bgColors = ['#3498db', '#e67e22', '#2ecc71', '#9b59b6', '#f1c40f'];
+  let bgColorIndex = 0;
+
+  // Game state
+  let player, obstacles, score, highScore, gameOver, youWin;
+  let obstacleTimer = 0;
+  let obstacleInterval = OBSTACLE_INTERVAL_START;
   let patternIndex = 0;
-  let nextSpawnX = canvas.width + 80;
-  let lastBgIndex = 0;
-  let bgColor = BG_PALETTE[0];
-  let obstacleColor = invertHex(bgColor);
-  let playerColor = shiftHue(obstacleColor, 32); // different from obstacleColor but still contrasting
-  let patternQueue = []; // upcoming patterns (we'll queue some to fill screen)
+  let rotationAngle = 0; // For player rotation on jump
 
-  // ---- init / helpers ----
-  function initGame(){
+  // Fixed, repeatable patterns:
+  const patterns = [
+    [{type:'spike', count:1, spacing: 40}],
+    [{type:'spike', count:3, spacing: 40}],
+    [{type:'spike', count:1, spacing: 40}, {type:'block', count:1, spacing: 60}],
+    [{type:'spike', count:2, spacing: 40}],
+    [{type:'block', count:1, spacing: 60}],
+  ];
+
+  // Opposite color helper: returns black or white depending on bg brightness
+  function getContrastColor(bgHex) {
+    // Convert hex to RGB
+    const r = parseInt(bgHex.substr(1,2),16);
+    const g = parseInt(bgHex.substr(3,2),16);
+    const b = parseInt(bgHex.substr(5,2),16);
+    // Calculate brightness per ITU-R BT.601
+    const brightness = (r * 299 + g * 587 + b * 114) / 1000;
+    return brightness > 125 ? '#000000' : '#ffffff';
+  }
+
+  function initGame() {
     player = {
-      x: 120,
+      x: 100,
       y: GROUND_Y - PLAYER_SIZE,
-      w: PLAYER_SIZE,
-      h: PLAYER_SIZE,
-      vy: 0,
-      onGround: true
+      width: PLAYER_SIZE,
+      height: PLAYER_SIZE,
+      velocityY: 0,
+      onGround: true,
+      rotation: 0,
     };
+
     obstacles = [];
-    scrollSpeed = START_SPEED;
+    scrollSpeed = 6;
     score = 0;
-    highScore = parseInt(localStorage.getItem('gdHighScore')) || 0;
     gameOver = false;
     youWin = false;
+    obstacleTimer = 0;
+    obstacleInterval = OBSTACLE_INTERVAL_START;
     patternIndex = 0;
-    nextSpawnX = canvas.width + 120;
-    patternQueue = [];
+    rotationAngle = 0;
 
-    lastBgIndex = 0;
-    bgColor = BG_PALETTE[lastBgIndex];
-    obstacleColor = invertHex(bgColor);
-    playerColor = shiftHue(obstacleColor, 32);
+    highScore = parseInt(localStorage.getItem('gdHighScore')) || 0;
 
-    // prefill some patterns so screen isn't empty
-    for(let i=0;i<6;i++){
-      queueNextPattern();
+    // Spawn initial obstacles so player doesn’t start over any
+    let startX = canvas.width + 50;
+    for(let i=0; i<5; i++){
+      addPattern(startX);
+      startX += 220;
     }
+
+    updateColors();
   }
 
-  // Convert hex to inverted hex (simple opposite)
-  function invertHex(hex){
-    const c = hex.replace('#','');
-    const r = (255 - parseInt(c.substring(0,2),16)).toString(16).padStart(2,'0');
-    const g = (255 - parseInt(c.substring(2,4),16)).toString(16).padStart(2,'0');
-    const b = (255 - parseInt(c.substring(4,6),16)).toString(16).padStart(2,'0');
-    return '#'+r+g+b;
-  }
-
-  // Shift hue slightly: convert hex -> hsl -> shift hue -> back
-  function hexToRgb(hex){
-    const c = hex.replace('#','');
-    return { r: parseInt(c.substring(0,2),16), g: parseInt(c.substring(2,4),16), b: parseInt(c.substring(4,6),16) };
-  }
-  function rgbToHex(r,g,b){ return '#'+[r,g,b].map(v => v.toString(16).padStart(2,'0')).join(''); }
-  function rgbToHsl(r,g,b){
-    r/=255; g/=255; b/=255;
-    const max=Math.max(r,g,b), min=Math.min(r,g,b);
-    let h=0,s=0,l=(max+min)/2;
-    if(max!==min){
-      const d=max-min;
-      s = l>0.5? d/(2-max-min) : d/(max+min);
-      switch(max){
-        case r: h=(g-b)/d + (g<b?6:0); break;
-        case g: h=(b-r)/d + 2; break;
-        case b: h=(r-g)/d + 4; break;
-      }
-      h/=6;
-    }
-    return {h: h*360, s: s, l: l};
-  }
-  function hslToRgb(h,s,l){
-    h/=360;
-    let r,g,b;
-    if(s===0){ r=g=b= l*255; return {r:Math.round(r), g:Math.round(g), b:Math.round(b)}; }
-    function hue2rgb(p,q,t){
-      if(t<0) t+=1; if(t>1) t-=1;
-      if(t<1/6) return p + (q-p)*6*t;
-      if(t<1/2) return q;
-      if(t<2/3) return p + (q-p)*(2/3 - t)*6;
-      return p;
-    }
-    let q = l < 0.5 ? l * (1 + s) : l + s - l*s;
-    let p = 2 * l - q;
-    r = hue2rgb(p,q,h + 1/3);
-    g = hue2rgb(p,q,h);
-    b = hue2rgb(p,q,h - 1/3);
-    return {r:Math.round(r*255), g:Math.round(g*255), b:Math.round(b*255)};
-  }
-  function shiftHue(hex, deg){
-    const {r,g,b} = hexToRgb(hex);
-    const {h,s,l} = rgbToHsl(r,g,b);
-    const hh = (h + deg) % 360;
-    const {r:rr,g:gg,b:bb} = hslToRgb(hh,s,l);
-    return rgbToHex(rr,gg,bb);
-  }
-
-  // ---- spawning patterns & obstacles ----
-  // queueNextPattern computes where to place next pattern and pushes obstacles into obstacles[]
-  function queueNextPattern(){
-    // pick next pattern in sequence (cyclic)
-    const pattern = PATTERNS[patternIndex % PATTERNS.length];
+  // Add pattern obstacles starting at startX, with no overlap issues expected from fixed spacing
+  function addPattern(startX){
+    const pattern = patterns[patternIndex % patterns.length];
     patternIndex++;
-    // randomize small gap variation
-    const gap = PATTERN_GAP_BASE + Math.floor(Math.random()*PATTERN_GAP_VARIATION) - PATTERN_GAP_VARIATION/2;
-    // compute positions for items in pattern relative to nextSpawnX
-    let baseX = nextSpawnX;
-    // ensure spawn is not too close to last obstacle (safe margin)
-    const safeMargin = 30;
-    if(obstacles.length){
-      const last = obstacles[obstacles.length-1];
-      if(baseX - (last.x + last.width) < safeMargin) baseX = last.x + last.width + safeMargin;
-    }
-    for(const item of pattern){
-      const obX = baseX + item.x;
-      const ob = createObstacle(item.type, obX);
-      // ensure no overlap with existing obstacles; if overlapped, push forward
-      while(isOverlappingAny(ob.x, ob.width)){
-        ob.x += 12;
+
+    let currentX = startX;
+
+    for(const pat of pattern){
+      for(let c=0; c<pat.count; c++){
+        obstacles.push({
+          x: currentX,
+          y: GROUND_Y,
+          width: 30,
+          height: 30,
+          type: pat.type,
+        });
+        currentX += pat.spacing;
       }
-      obstacles.push(ob);
-    }
-    nextSpawnX = baseX + (pattern.reduce((m,i)=>Math.max(m,i.x),0) + gap + 120);
-  }
-
-  function createObstacle(type, x){
-    if(type === 'block'){
-      return { type:'block', x: Math.round(x), y: GROUND_Y - 30, width: 48, height: 30 };
-    } else { // spike
-      return { type:'spike', x: Math.round(x), y: GROUND_Y - 26, width: 36, height: 26 };
+      currentX += 100; // extra gap after pattern
     }
   }
 
-  function isOverlappingAny(x, w){
-    for(const o of obstacles){
-      if(Math.abs(o.x - x) < (o.width + w)/1.5) return true;
+  function drawSpike(x, y, size, color) {
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + size / 2, y - size);
+    ctx.lineTo(x + size, y);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  function drawBlock(x, y, size, color) {
+    ctx.fillStyle = color;
+    ctx.fillRect(x, y - size, size, size);
+  }
+
+  function checkCollision(player, ob) {
+    // Block collision: simple AABB
+    if(ob.type === 'block' || ob.type === 'spike') {
+      return !(
+        player.x + player.width < ob.x ||
+        player.x > ob.x + ob.width ||
+        player.y + player.height < ob.y - ob.height ||
+        player.y > ob.y
+      );
     }
     return false;
   }
 
-  // ---- input ----
-  function doJump(){
-    if(gameOver || youWin) return;
-    if(player.onGround){
-      player.vy = JUMP_FORCE;
-      player.onGround = false;
-    }
-  }
-  window.addEventListener('keydown', e => { if(e.code === 'Space' || e.code === 'ArrowUp') doJump(); });
-  window.addEventListener('mousedown', () => doJump());
-
-  // ---- color change every 100 score ----
-  function updateColorsByScore(){
-    const idx = Math.floor(score / 100) % BG_PALETTE.length;
-    if(idx !== lastBgIndex){
-      lastBgIndex = idx;
-      bgColor = BG_PALETTE[idx];
-      obstacleColor = invertHex(bgColor);
-      // make player color different from obstacle color but still contrasting to bg
-      playerColor = shiftHue(obstacleColor, 40);
-      // ensure not identical by fallback
-      if(playerColor.toLowerCase() === obstacleColor.toLowerCase()){
-        playerColor = shiftHue(obstacleColor, -40);
-      }
-    }
+  function updateColors() {
+    // Background cycles every 100 score
+    bgColorIndex = Math.floor(score / 100) % bgColors.length;
+    document.body.style.backgroundColor = bgColors[bgColorIndex];
   }
 
-  // ---- collision detection ----
-  function rectsCollide(a,b){
-    return !(a.x + a.width <= b.x || a.x >= b.x + b.width || a.y + a.height <= b.y || a.y >= b.y + b.height);
-  }
-  // For spikes we'll approximate with AABB hitting the triangle base area
-  function checkHitPlayer(ob){
-    const pRect = { x: player.x, y: player.y, width: player.w, height: player.h };
-    const obRect = { x: ob.x, y: ob.y, width: ob.width, height: ob.height };
-    if(ob.type === 'block'){
-      return rectsCollide(pRect, obRect);
-    } else { // spike
-      // treat spike as full rectangle for collisions but shrink its vertical hitbox a bit
-      const spikeHitbox = { x: obRect.x, y: obRect.y + 4, width: obRect.width, height: obRect.height - 4 };
-      return rectsCollide(pRect, spikeHitbox);
-    }
-  }
-
-  // ---- main loop ----
-  function update(){
+  function update() {
     if(gameOver || youWin) return;
 
-    // win check
-    if(score >= WIN_SCORE){
+    // Win condition
+    if(score >= 10000) {
       youWin = true;
       gameOver = true;
       return;
     }
 
-    // Update jump force decrease rule (if you'd like dynamic, uncomment)
-    // (earlier versions had jump change over time — here we keep fixed JUMP_FORCE for consistency)
-    // JUMP_FORCE logic could be added here.
-
-    // physics
-    player.vy += GRAVITY;
-    player.y += player.vy;
-    if(player.y + player.h >= GROUND_Y){
-      player.y = GROUND_Y - player.h;
-      player.vy = 0;
-      player.onGround = true;
+    // Adjust jump force based on score (decreasing jump height over time, capped)
+    if(score < JUMP_INITIAL_DECREASE_LIMIT){
+      jumpForce = JUMP_INITIAL_FORCE;
     } else {
-      player.onGround = false;
+      let stepsPassed = Math.floor((score - JUMP_INITIAL_DECREASE_LIMIT) / JUMP_DECREASE_SCORE_INTERVAL);
+      jumpForce = Math.max(JUMP_INITIAL_FORCE + stepsPassed * JUMP_DECREASE_STEP, JUMP_MIN_FORCE);
     }
 
-    // move obstacles
-    for(const ob of obstacles){
+    player.velocityY += GRAVITY;
+    player.y += player.velocityY;
+
+    // Ground collision
+    if(player.y + player.height >= GROUND_Y){
+      player.y = GROUND_Y - player.height;
+      player.velocityY = 0;
+      player.onGround = true;
+    }
+
+    // Move obstacles and check collision
+    for(let i = obstacles.length - 1; i >= 0; i--){
+      const ob = obstacles[i];
       ob.x -= scrollSpeed;
-    }
-    // remove offscreen
-    obstacles = obstacles.filter(o => o.x + o.width > -50);
 
-    // spawn next pattern when nextSpawnX approaches canvas width enough
-    if(nextSpawnX < canvas.width + 400 && obstacles.length < 40){
-      queueNextPattern();
-    }
-
-    // simple timer alternative: ensure there are always enough queued patterns
-    if(obstacles.length < 6){
-      queueNextPattern();
-    }
-
-    // collision check
-    for(const ob of obstacles){
-      if(checkHitPlayer(ob)){
+      if(checkCollision(player, ob)){
         gameOver = true;
-        if(score > highScore){ highScore = score; localStorage.setItem('gdHighScore', highScore); }
+        if(score > highScore){
+          highScore = score;
+          localStorage.setItem('gdHighScore', highScore);
+        }
+      }
+
+      if(ob.x + ob.width < 0){
+        obstacles.splice(i, 1);
       }
     }
 
-    // scoring & speedup
-    score++;
-    if(score % 500 === 0){
-      scrollSpeed += SPEED_INCREASE_PER_500;
+    obstacleTimer++;
+    if(obstacleTimer > obstacleInterval){
+      obstacleTimer = 0;
+      addPattern(canvas.width + 10);
+      scrollSpeed += SPEED_INCREMENT;
+      if(obstacleInterval > OBSTACLE_INTERVAL_MIN) obstacleInterval -= 1;
     }
 
-    // background color update
-    updateColorsByScore();
+    score++;
+
+    updateColors();
   }
 
-  function draw(){
-    // background
-    ctx.fillStyle = bgColor;
-    ctx.fillRect(0,0,canvas.width,canvas.height);
+  function draw() {
+    // Draw background
+    ctx.fillStyle = bgColors[bgColorIndex];
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // ground line
-    ctx.fillStyle = '#9aa0a6';
-    ctx.fillRect(0, GROUND_Y, canvas.width, canvas.height - GROUND_Y);
+    // Calculate colors based on background contrast
+    const contrastColor = getContrastColor(bgColors[bgColorIndex]);
 
-    // player
+    // Player color - pick opposite color but not same as obstacles
+    const playerColor = contrastColor === '#000000' ? '#ffcc00' : '#222222';
+    const obstacleColor = contrastColor;
+
+    // Draw ground
+    ctx.fillStyle = '#444';
+    ctx.fillRect(0, GROUND_Y, canvas.width, 20);
+
+    // Draw player rotated
+    ctx.save();
+    ctx.translate(player.x + player.width/2, player.y + player.height/2);
+    ctx.rotate(player.rotation);
     ctx.fillStyle = playerColor;
-    ctx.fillRect(player.x, player.y, player.w, player.h);
+    ctx.fillRect(-player.width/2, -player.height/2, player.width, player.height);
+    ctx.restore();
 
-    // obstacles
+    // Draw obstacles
     for(const ob of obstacles){
-      if(ob.type === 'block'){
-        ctx.fillStyle = obstacleColor;
-        ctx.fillRect(ob.x, ob.y, ob.width, ob.height);
-      } else {
-        // spike: draw triangle but use obstacleColor
-        ctx.fillStyle = obstacleColor;
-        ctx.beginPath();
-        ctx.moveTo(ob.x, ob.y + ob.height);
-        ctx.lineTo(ob.x + ob.width/2, ob.y);
-        ctx.lineTo(ob.x + ob.width, ob.y + ob.height);
-        ctx.closePath();
-        ctx.fill();
+      if(ob.type === 'spike'){
+        drawSpike(ob.x, ob.y, ob.width, obstacleColor);
+      } else if(ob.type === 'block'){
+        drawBlock(ob.x, ob.y, ob.width, obstacleColor);
       }
     }
 
-    // HUD
+    // Draw scores
     ctx.fillStyle = playerColor;
     ctx.font = '20px Arial';
     ctx.textAlign = 'left';
-    ctx.fillText(`Score: ${score}`, 14, 28);
-    ctx.fillText(`High Score: ${highScore}`, 14, 54);
+    ctx.fillText(`Score: ${score}`, 10, 30);
+    ctx.fillText(`High Score: ${highScore}`, 10, 60);
 
     if(gameOver && !youWin){
       ctx.fillStyle = '#e74c3c';
+      ctx.font = '40px Arial';
       ctx.textAlign = 'center';
-      ctx.font = '44px Arial';
-      ctx.fillText('Game Over', canvas.width/2, canvas.height/2 - 10);
-      ctx.font = '18px Arial';
-      ctx.fillText('Press Space / Up or Click to Restart', canvas.width/2, canvas.height/2 + 24);
+      ctx.fillText('Game Over', canvas.width / 2, canvas.height / 2 - 20);
+      ctx.font = '20px Arial';
+      ctx.fillText('Press Space, Up or Click to Restart', canvas.width / 2, canvas.height / 2 + 20);
     }
 
     if(youWin){
-      const alpha = 0.5 + 0.5 * Math.sin(Date.now()/200);
-      ctx.fillStyle = `rgba(46,204,113,${alpha})`;
+      const alpha = 0.5 + 0.5 * Math.sin(Date.now() / 200);
+      ctx.fillStyle = `rgba(46, 204, 113, ${alpha})`;
+      ctx.font = '50px Arial';
       ctx.textAlign = 'center';
-      ctx.font = '56px Arial';
-      ctx.fillText('YOU WIN!', canvas.width/2, canvas.height/2);
+      ctx.fillText('You Win!', canvas.width / 2, canvas.height / 2);
     }
   }
 
@@ -351,20 +286,31 @@
     requestAnimationFrame(loop);
   }
 
-  // restart handling
-  window.addEventListener('keydown', e => {
-    if((e.code === 'Space' || e.code === 'ArrowUp') && (gameOver || youWin)){
+  function jump() {
+    if(!gameOver && player.onGround){
+      player.velocityY = jumpForce;
+      player.onGround = false;
+      // rotate 90 degrees clockwise on jump
+      rotationAngle += Math.PI / 2;
+      player.rotation = rotationAngle;
+    } else if(gameOver){
       initGame();
     }
-  });
-  window.addEventListener('mousedown', e => {
-    if(gameOver || youWin) initGame();
+  }
+
+  window.addEventListener('keydown', e => {
+    if(e.code === 'Space' || e.code === 'ArrowUp'){
+      jump();
+    }
   });
 
-  // prevent initial overlap: make sure first queued patterns are far enough ahead
+  // Mouse click jump
+  window.addEventListener('mousedown', e => {
+    jump();
+  });
+
   initGame();
   loop();
-
 })();
 </script>
 </body>
