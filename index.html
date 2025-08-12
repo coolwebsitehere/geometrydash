@@ -8,13 +8,12 @@
   body {
     margin: 0;
     overflow: hidden;
-    font-family: Arial, sans-serif;
   }
   canvas {
     display: block;
     margin: 0 auto;
-    background: #fff;
-    box-shadow: 0 0 10px #aaa;
+    background: white;
+    transition: background 0.4s ease;
   }
 </style>
 </head>
@@ -25,56 +24,48 @@
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
 
+  // Themes for background, player, obstacle colors
+  const themes = [
+    { bg: '#ffffff', player: '#000000', obstacle: '#ff0000' },
+    { bg: '#cce7ff', player: '#003344', obstacle: '#cc4400' },
+    { bg: '#ffe6cc', player: '#663300', obstacle: '#004466' },
+    { bg: '#e0ffcc', player: '#334400', obstacle: '#660033' },
+    { bg: '#ffd6d6', player: '#990000', obstacle: '#000066' },
+    { bg: '#f0e6ff', player: '#3a0066', obstacle: '#00663a' },
+  ];
+
+  let currentThemeIndex = 0;
+
+  // Game constants
   const GROUND_Y = canvas.height - 20;
   const PLAYER_SIZE = 30;
   const GRAVITY = 1;
-
-  // Jump config
-  let jumpForce = -18;
   const JUMP_INITIAL_FORCE = -18;
   const JUMP_DECREASE_STEP = 0.5;
   const JUMP_DECREASE_SCORE_INTERVAL = 1500;
   const JUMP_MIN_FORCE = -15;
   const JUMP_INITIAL_DECREASE_LIMIT = 2500;
-
-  // Speed & difficulty
-  let scrollSpeed = 6;
-  const SPEED_INCREMENT = 0.05;
-  const OBSTACLE_INTERVAL_START = 90;
+  const OBSTACLE_INTERVAL_START = 120;
   const OBSTACLE_INTERVAL_MIN = 45;
+  const SPEED_INCREMENT = 0.05;
+  const SPEED_START = 6;
 
-  // Colors for background cycling
-  const bgColors = ['#3498db', '#e67e22', '#2ecc71', '#9b59b6', '#f1c40f'];
-  let bgColorIndex = 0;
-
-  // Track if colors flipped this cycle
-  let colorsFlipped = false;
-
-  // Game state
-  let player, obstacles, score, highScore, gameOver, youWin;
+  // Game state variables
+  let player, obstacles, scrollSpeed, score, highScore, gameOver, youWin;
   let obstacleTimer = 0;
   let obstacleInterval = OBSTACLE_INTERVAL_START;
-  let patternIndex = 0;
-  let rotationAngle = 0; // For player rotation on jump
+  let jumpForce = JUMP_INITIAL_FORCE;
+  let rotationAngle = 0;
 
-  // Fixed, repeatable patterns:
-  // Added more reasonable spacing between obstacles
+  // Patterns with spacing: no two blocks side-by-side
+  // spacing ensures obstacles don't overlap or cluster too much
   const patterns = [
-    [{type:'spike', count:1, spacing: 80}],
-    [{type:'spike', count:3, spacing: 50}],
-    [{type:'spike', count:1, spacing: 60}, {type:'block', count:1, spacing: 80}],
-    [{type:'spike', count:2, spacing: 60}],
-    [{type:'block', count:1, spacing: 80}],
+    [{type:'spike', count:1, spacing: 120}],
+    [{type:'spike', count:3, spacing: 60}],
+    [{type:'spike', count:1, spacing: 90}, {type:'block', count:1, spacing: 120}],
+    [{type:'spike', count:2, spacing: 90}],
+    [{type:'block', count:1, spacing: 150}],
   ];
-
-  // Opposite color helper: returns black or white depending on bg brightness
-  function getContrastColor(bgHex) {
-    const r = parseInt(bgHex.substr(1,2),16);
-    const g = parseInt(bgHex.substr(3,2),16);
-    const b = parseInt(bgHex.substr(5,2),16);
-    const brightness = (r * 299 + g * 587 + b * 114) / 1000;
-    return brightness > 125 ? '#000000' : '#ffffff';
-  }
 
   function initGame() {
     player = {
@@ -88,36 +79,38 @@
     };
 
     obstacles = [];
-    scrollSpeed = 6;
+    scrollSpeed = SPEED_START;
     score = 0;
     gameOver = false;
     youWin = false;
     obstacleTimer = 0;
     obstacleInterval = OBSTACLE_INTERVAL_START;
-    patternIndex = 0;
+    jumpForce = JUMP_INITIAL_FORCE;
     rotationAngle = 0;
 
     highScore = parseInt(localStorage.getItem('gdHighScore')) || 0;
 
-    // Spawn initial obstacles so player doesn’t start over any
-    let startX = canvas.width + 50;
-    for(let i=0; i<5; i++){
-      addPattern(startX);
-      startX += 260; // bigger gaps between starting obstacles
-    }
+    // Start with first theme
+    currentThemeIndex = 0;
+    applyTheme(currentThemeIndex);
 
-    colorsFlipped = Math.random() < 0.5; // randomize initial flip state
-    updateColors();
+    // Spawn initial obstacles spaced well
+    let startX = canvas.width + 100;
+    for(let i = 0; i < 5; i++) {
+      addPattern(startX);
+      startX += 320; // bigger gap between initial obstacles
+    }
   }
 
+  // Add pattern obstacles starting at startX
   function addPattern(startX){
-    const pattern = patterns[patternIndex % patterns.length];
-    patternIndex++;
+    const pattern = patterns[score < 4000 ? score % patterns.length : (score % patterns.length)]; 
+    // Using modulo to loop patterns; can be improved if desired
 
     let currentX = startX;
 
     for(const pat of pattern){
-      for(let c=0; c<pat.count; c++){
+      for(let c = 0; c < pat.count; c++){
         obstacles.push({
           x: currentX,
           y: GROUND_Y,
@@ -127,56 +120,36 @@
         });
         currentX += pat.spacing;
       }
-      currentX += 100; // extra gap after pattern
+      currentX += 120; // extra space after pattern group
     }
   }
 
-  function drawSpike(x, y, size, color) {
-    ctx.fillStyle = color;
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    ctx.lineTo(x + size / 2, y - size);
-    ctx.lineTo(x + size, y);
-    ctx.closePath();
-    ctx.fill();
+  function applyTheme(index){
+    const theme = themes[index];
+    canvas.style.background = theme.bg;
+    player.color = theme.player;
+    obstacleColor = theme.obstacle;
   }
 
-  function drawBlock(x, y, size, color) {
-    ctx.fillStyle = color;
-    ctx.fillRect(x, y - size, size, size);
-  }
-
-  function checkCollision(player, ob) {
-    if(ob.type === 'block' || ob.type === 'spike') {
-      return !(
-        player.x + player.width < ob.x ||
-        player.x > ob.x + ob.width ||
-        player.y + player.height < ob.y - ob.height ||
-        player.y > ob.y
-      );
-    }
-    return false;
-  }
-
-  function updateColors() {
-    bgColorIndex = Math.floor(score / 100) % bgColors.length;
-    document.body.style.backgroundColor = bgColors[bgColorIndex];
-
-    // Flip colors every background change
-    if(score % 100 === 0){
-      colorsFlipped = !colorsFlipped;
-    }
+  function checkCollision(player, ob){
+    return !(
+      player.x + player.width < ob.x ||
+      player.x > ob.x + ob.width ||
+      player.y + player.height < ob.y - ob.height ||
+      player.y > ob.y
+    );
   }
 
   function update() {
     if(gameOver || youWin) return;
 
-    if(score >= 10000) {
+    if(score >= 10000){
       youWin = true;
       gameOver = true;
       return;
     }
 
+    // Jump force decreases slowly over time but capped
     if(score < JUMP_INITIAL_DECREASE_LIMIT){
       jumpForce = JUMP_INITIAL_FORCE;
     } else {
@@ -193,6 +166,7 @@
       player.onGround = true;
     }
 
+    // Move obstacles left and check collisions
     for(let i = obstacles.length - 1; i >= 0; i--){
       const ob = obstacles[i];
       ob.x -= scrollSpeed;
@@ -213,43 +187,48 @@
     obstacleTimer++;
     if(obstacleTimer > obstacleInterval){
       obstacleTimer = 0;
-      addPattern(canvas.width + 10);
+      addPattern(canvas.width + 50);
       scrollSpeed += SPEED_INCREMENT;
       if(obstacleInterval > OBSTACLE_INTERVAL_MIN) obstacleInterval -= 1;
     }
 
     score++;
 
-    updateColors();
+    // Change theme every 100 points
+    if(score % 100 === 0){
+      currentThemeIndex = (currentThemeIndex + 1) % themes.length;
+      applyTheme(currentThemeIndex);
+    }
+  }
+
+  function drawSpike(x, y, size, color) {
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + size / 2, y - size);
+    ctx.lineTo(x + size, y);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  function drawBlock(x, y, size, color) {
+    ctx.fillStyle = color;
+    ctx.fillRect(x, y - size, size, size);
   }
 
   function draw() {
-    // Draw background
-    ctx.fillStyle = bgColors[bgColorIndex];
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    const contrastColor = getContrastColor(bgColors[bgColorIndex]);
-
-    // Flip player & obstacle colors each bg change for variety
-    let playerColor, obstacleColor;
-    if(colorsFlipped){
-      playerColor = contrastColor;
-      obstacleColor = contrastColor === '#000000' ? '#ffffff' : '#000000';
-    } else {
-      obstacleColor = contrastColor;
-      playerColor = contrastColor === '#000000' ? '#ffffff' : '#000000';
-    }
-
-    // Draw ground
+    // Ground
     ctx.fillStyle = '#444';
     ctx.fillRect(0, GROUND_Y, canvas.width, 20);
 
-    // Draw rotated player
+    // Player with rotation
     ctx.save();
-    ctx.translate(player.x + player.width/2, player.y + player.height/2);
+    ctx.translate(player.x + player.width / 2, player.y + player.height / 2);
     ctx.rotate(player.rotation);
-    ctx.fillStyle = playerColor;
-    ctx.fillRect(-player.width/2, -player.height/2, player.width, player.height);
+    ctx.fillStyle = player.color;
+    ctx.fillRect(-player.width / 2, -player.height / 2, player.width, player.height);
     ctx.restore();
 
     // Draw obstacles
@@ -261,13 +240,14 @@
       }
     }
 
-    // Draw scores
-    ctx.fillStyle = playerColor;
+    // Scores
+    ctx.fillStyle = player.color;
     ctx.font = '20px Arial';
     ctx.textAlign = 'left';
     ctx.fillText(`Score: ${score}`, 10, 30);
     ctx.fillText(`High Score: ${highScore}`, 10, 60);
 
+    // Game over
     if(gameOver && !youWin){
       ctx.fillStyle = '#e74c3c';
       ctx.font = '40px Arial';
@@ -277,6 +257,7 @@
       ctx.fillText('Press Space, Up or Click to Restart', canvas.width / 2, canvas.height / 2 + 20);
     }
 
+    // Win message
     if(youWin){
       const alpha = 0.5 + 0.5 * Math.sin(Date.now() / 200);
       ctx.fillStyle = `rgba(46, 204, 113, ${alpha})`;
@@ -286,11 +267,11 @@
     }
   }
 
-  function jump() {
+  function jump(){
     if(!gameOver && player.onGround){
       player.velocityY = jumpForce;
       player.onGround = false;
-      rotationAngle += Math.PI / 2;
+      rotationAngle += Math.PI / 2; // 90 deg rotation
       player.rotation = rotationAngle;
     } else if(gameOver){
       initGame();
@@ -303,18 +284,19 @@
     }
   });
 
-  window.addEventListener('mousedown', e => {
+  window.addEventListener('mousedown', () => {
     jump();
   });
 
   initGame();
-  loop();
 
   function loop(){
     update();
     draw();
     requestAnimationFrame(loop);
   }
+
+  loop();
 })();
 </script>
 </body>
