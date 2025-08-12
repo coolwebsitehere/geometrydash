@@ -47,6 +47,9 @@
   const bgColors = ['#3498db', '#e67e22', '#2ecc71', '#9b59b6', '#f1c40f'];
   let bgColorIndex = 0;
 
+  // Track if colors flipped this cycle
+  let colorsFlipped = false;
+
   // Game state
   let player, obstacles, score, highScore, gameOver, youWin;
   let obstacleTimer = 0;
@@ -55,21 +58,20 @@
   let rotationAngle = 0; // For player rotation on jump
 
   // Fixed, repeatable patterns:
+  // Added more reasonable spacing between obstacles
   const patterns = [
-    [{type:'spike', count:1, spacing: 40}],
-    [{type:'spike', count:3, spacing: 40}],
-    [{type:'spike', count:1, spacing: 40}, {type:'block', count:1, spacing: 60}],
-    [{type:'spike', count:2, spacing: 40}],
-    [{type:'block', count:1, spacing: 60}],
+    [{type:'spike', count:1, spacing: 80}],
+    [{type:'spike', count:3, spacing: 50}],
+    [{type:'spike', count:1, spacing: 60}, {type:'block', count:1, spacing: 80}],
+    [{type:'spike', count:2, spacing: 60}],
+    [{type:'block', count:1, spacing: 80}],
   ];
 
   // Opposite color helper: returns black or white depending on bg brightness
   function getContrastColor(bgHex) {
-    // Convert hex to RGB
     const r = parseInt(bgHex.substr(1,2),16);
     const g = parseInt(bgHex.substr(3,2),16);
     const b = parseInt(bgHex.substr(5,2),16);
-    // Calculate brightness per ITU-R BT.601
     const brightness = (r * 299 + g * 587 + b * 114) / 1000;
     return brightness > 125 ? '#000000' : '#ffffff';
   }
@@ -101,13 +103,13 @@
     let startX = canvas.width + 50;
     for(let i=0; i<5; i++){
       addPattern(startX);
-      startX += 220;
+      startX += 260; // bigger gaps between starting obstacles
     }
 
+    colorsFlipped = Math.random() < 0.5; // randomize initial flip state
     updateColors();
   }
 
-  // Add pattern obstacles starting at startX, with no overlap issues expected from fixed spacing
   function addPattern(startX){
     const pattern = patterns[patternIndex % patterns.length];
     patternIndex++;
@@ -145,7 +147,6 @@
   }
 
   function checkCollision(player, ob) {
-    // Block collision: simple AABB
     if(ob.type === 'block' || ob.type === 'spike') {
       return !(
         player.x + player.width < ob.x ||
@@ -158,22 +159,24 @@
   }
 
   function updateColors() {
-    // Background cycles every 100 score
     bgColorIndex = Math.floor(score / 100) % bgColors.length;
     document.body.style.backgroundColor = bgColors[bgColorIndex];
+
+    // Flip colors every background change
+    if(score % 100 === 0){
+      colorsFlipped = !colorsFlipped;
+    }
   }
 
   function update() {
     if(gameOver || youWin) return;
 
-    // Win condition
     if(score >= 10000) {
       youWin = true;
       gameOver = true;
       return;
     }
 
-    // Adjust jump force based on score (decreasing jump height over time, capped)
     if(score < JUMP_INITIAL_DECREASE_LIMIT){
       jumpForce = JUMP_INITIAL_FORCE;
     } else {
@@ -184,14 +187,12 @@
     player.velocityY += GRAVITY;
     player.y += player.velocityY;
 
-    // Ground collision
     if(player.y + player.height >= GROUND_Y){
       player.y = GROUND_Y - player.height;
       player.velocityY = 0;
       player.onGround = true;
     }
 
-    // Move obstacles and check collision
     for(let i = obstacles.length - 1; i >= 0; i--){
       const ob = obstacles[i];
       ob.x -= scrollSpeed;
@@ -227,18 +228,23 @@
     ctx.fillStyle = bgColors[bgColorIndex];
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // Calculate colors based on background contrast
     const contrastColor = getContrastColor(bgColors[bgColorIndex]);
 
-    // Player color - pick opposite color but not same as obstacles
-    const playerColor = contrastColor === '#000000' ? '#ffcc00' : '#222222';
-    const obstacleColor = contrastColor;
+    // Flip player & obstacle colors each bg change for variety
+    let playerColor, obstacleColor;
+    if(colorsFlipped){
+      playerColor = contrastColor;
+      obstacleColor = contrastColor === '#000000' ? '#ffffff' : '#000000';
+    } else {
+      obstacleColor = contrastColor;
+      playerColor = contrastColor === '#000000' ? '#ffffff' : '#000000';
+    }
 
     // Draw ground
     ctx.fillStyle = '#444';
     ctx.fillRect(0, GROUND_Y, canvas.width, 20);
 
-    // Draw player rotated
+    // Draw rotated player
     ctx.save();
     ctx.translate(player.x + player.width/2, player.y + player.height/2);
     ctx.rotate(player.rotation);
@@ -280,17 +286,10 @@
     }
   }
 
-  function loop(){
-    update();
-    draw();
-    requestAnimationFrame(loop);
-  }
-
   function jump() {
     if(!gameOver && player.onGround){
       player.velocityY = jumpForce;
       player.onGround = false;
-      // rotate 90 degrees clockwise on jump
       rotationAngle += Math.PI / 2;
       player.rotation = rotationAngle;
     } else if(gameOver){
@@ -304,13 +303,18 @@
     }
   });
 
-  // Mouse click jump
   window.addEventListener('mousedown', e => {
     jump();
   });
 
   initGame();
   loop();
+
+  function loop(){
+    update();
+    draw();
+    requestAnimationFrame(loop);
+  }
 })();
 </script>
 </body>
