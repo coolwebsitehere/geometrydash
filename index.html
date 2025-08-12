@@ -1,178 +1,371 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>Geometry Dash</title>
-  <style>
-    body {
-      margin: 0;
-      background: #222;
-      overflow: hidden;
-    }
-    canvas {
-      display: block;
-      margin: auto;
-      background: #333;
-    }
-  </style>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Geometry Dash</title>
+<style>
+  html,body { height:100%; margin:0; background:#222; }
+  body { display:flex; align-items:center; justify-content:center; font-family:Arial,Helvetica,sans-serif; }
+  canvas { background:#fff; box-shadow:0 8px 30px rgba(0,0,0,0.4); display:block; }
+</style>
 </head>
 <body>
-<canvas id="gameCanvas" width="800" height="400"></canvas>
+<canvas id="game" width="900" height="500"></canvas>
 <script>
-const canvas = document.getElementById('gameCanvas');
-const ctx = canvas.getContext('2d');
+(() => {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
 
-let player = { x: 50, y: 300, size: 20, dy: 0, gravity: 0.8, jumpPower: -17, onGround: false };
-let speed = 6; // faster start
-let score = 0;
-let highScore = localStorage.getItem("highScore") || 0;
-let obstacles = [];
-let spawnTimer = 0;
-let gameOver = false;
-let gameWon = false;
+  // ---- Settings / tuning ----
+  const GROUND_Y = canvas.height - 60;
+  const PLAYER_SIZE = 32;
+  const GRAVITY = 1.2;
+  let JUMP_FORCE = -16;         // slightly smaller jump (negative)
+  const START_SPEED = 7;        // start a bit faster
+  const SPEED_INCREASE_PER_500 = 0.5;
+  const WIN_SCORE = 10000;
+  // patterns are arrays of items: {type:'block'|'spike', xOffset}
+  const PATTERNS = [
+    // pattern 0: single block
+    [{type:'block', x:0}],
+    // pattern 1: single spike, then block (safe gap)
+    [{type:'spike', x:0},{type:'block', x:70}],
+    // pattern 2: double block (small gap)
+    [{type:'block', x:0},{type:'block', x:90}],
+    // pattern 3: spike, spike (twin spikes)
+    [{type:'spike', x:0},{type:'spike', x:48}],
+    // pattern 4: block, spike, block (longer pattern)
+    [{type:'block', x:0},{type:'spike', x:84},{type:'block', x:168}],
+  ];
+  const PATTERN_GAP_BASE = 260; // base pixels added after a pattern
+  const PATTERN_GAP_VARIATION = 140; // added random range
 
-function jump() {
-  if (player.onGround) {
-    player.dy = player.jumpPower;
-    player.onGround = false;
-  }
-}
+  // background palette (will cycle)
+  const BG_PALETTE = ['#f0f0f0','#ffdfe6','#e6ffd9','#e6f0ff','#fff7e6','#f2e6ff','#e6fff8','#f0f4f8'];
 
-document.addEventListener('keydown', e => { if (e.code === 'Space') jump(); });
-document.addEventListener('mousedown', jump);
+  // ---- game state ----
+  let player, obstacles, scrollSpeed, score, highScore, gameOver, youWin;
+  let patternIndex = 0;
+  let nextSpawnX = canvas.width + 80;
+  let lastBgIndex = 0;
+  let bgColor = BG_PALETTE[0];
+  let obstacleColor = invertHex(bgColor);
+  let playerColor = shiftHue(obstacleColor, 32); // different from obstacleColor but still contrasting
+  let patternQueue = []; // upcoming patterns (we'll queue some to fill screen)
 
-function resetGame() {
-  player.y = 300;
-  player.dy = 0;
-  speed = 6;
-  score = 0;
-  obstacles = [];
-  spawnTimer = 0;
-  gameOver = false;
-  gameWon = false;
-}
+  // ---- init / helpers ----
+  function initGame(){
+    player = {
+      x: 120,
+      y: GROUND_Y - PLAYER_SIZE,
+      w: PLAYER_SIZE,
+      h: PLAYER_SIZE,
+      vy: 0,
+      onGround: true
+    };
+    obstacles = [];
+    scrollSpeed = START_SPEED;
+    score = 0;
+    highScore = parseInt(localStorage.getItem('gdHighScore')) || 0;
+    gameOver = false;
+    youWin = false;
+    patternIndex = 0;
+    nextSpawnX = canvas.width + 120;
+    patternQueue = [];
 
-function spawnObstacle() {
-  let type = Math.random() < 0.5 ? 'block' : 'spike';
-  obstacles.push({
-    x: canvas.width,
-    y: type === 'block' ? 350 : 360,
-    width: type === 'block' ? 40 : 20,
-    height: type === 'block' ? 50 : 40,
-    type: type
-  });
+    lastBgIndex = 0;
+    bgColor = BG_PALETTE[lastBgIndex];
+    obstacleColor = invertHex(bgColor);
+    playerColor = shiftHue(obstacleColor, 32);
 
-  // 50% chance to spawn second obstacle with the first
-  if (Math.random() < 0.5) {
-    let secondType = type === 'block' ? 'spike' : 'block';
-    obstacles.push({
-      x: canvas.width + (secondType === 'block' ? 50 : 40),
-      y: secondType === 'block' ? 350 : 360,
-      width: secondType === 'block' ? 40 : 20,
-      height: secondType === 'block' ? 50 : 40,
-      type: secondType
-    });
-  }
-}
-
-function update() {
-  if (gameOver || gameWon) return;
-
-  player.dy += player.gravity;
-  player.y += player.dy;
-
-  if (player.y >= 300) {
-    player.y = 300;
-    player.dy = 0;
-    player.onGround = true;
-  }
-
-  spawnTimer--;
-  if (spawnTimer <= 0) {
-    spawnObstacle();
-    spawnTimer = 90 + Math.random() * 40; // varied spacing
+    // prefill some patterns so screen isn't empty
+    for(let i=0;i<6;i++){
+      queueNextPattern();
+    }
   }
 
-  for (let obs of obstacles) {
-    obs.x -= speed;
-    if (
-      player.x < obs.x + obs.width &&
-      player.x + player.size > obs.x &&
-      player.y < obs.y + obs.height &&
-      player.y + player.size > obs.y
-    ) {
-      gameOver = true;
-      if (score > highScore) {
-        highScore = score;
-        localStorage.setItem("highScore", highScore);
+  // Convert hex to inverted hex (simple opposite)
+  function invertHex(hex){
+    const c = hex.replace('#','');
+    const r = (255 - parseInt(c.substring(0,2),16)).toString(16).padStart(2,'0');
+    const g = (255 - parseInt(c.substring(2,4),16)).toString(16).padStart(2,'0');
+    const b = (255 - parseInt(c.substring(4,6),16)).toString(16).padStart(2,'0');
+    return '#'+r+g+b;
+  }
+
+  // Shift hue slightly: convert hex -> hsl -> shift hue -> back
+  function hexToRgb(hex){
+    const c = hex.replace('#','');
+    return { r: parseInt(c.substring(0,2),16), g: parseInt(c.substring(2,4),16), b: parseInt(c.substring(4,6),16) };
+  }
+  function rgbToHex(r,g,b){ return '#'+[r,g,b].map(v => v.toString(16).padStart(2,'0')).join(''); }
+  function rgbToHsl(r,g,b){
+    r/=255; g/=255; b/=255;
+    const max=Math.max(r,g,b), min=Math.min(r,g,b);
+    let h=0,s=0,l=(max+min)/2;
+    if(max!==min){
+      const d=max-min;
+      s = l>0.5? d/(2-max-min) : d/(max+min);
+      switch(max){
+        case r: h=(g-b)/d + (g<b?6:0); break;
+        case g: h=(b-r)/d + 2; break;
+        case b: h=(r-g)/d + 4; break;
+      }
+      h/=6;
+    }
+    return {h: h*360, s: s, l: l};
+  }
+  function hslToRgb(h,s,l){
+    h/=360;
+    let r,g,b;
+    if(s===0){ r=g=b= l*255; return {r:Math.round(r), g:Math.round(g), b:Math.round(b)}; }
+    function hue2rgb(p,q,t){
+      if(t<0) t+=1; if(t>1) t-=1;
+      if(t<1/6) return p + (q-p)*6*t;
+      if(t<1/2) return q;
+      if(t<2/3) return p + (q-p)*(2/3 - t)*6;
+      return p;
+    }
+    let q = l < 0.5 ? l * (1 + s) : l + s - l*s;
+    let p = 2 * l - q;
+    r = hue2rgb(p,q,h + 1/3);
+    g = hue2rgb(p,q,h);
+    b = hue2rgb(p,q,h - 1/3);
+    return {r:Math.round(r*255), g:Math.round(g*255), b:Math.round(b*255)};
+  }
+  function shiftHue(hex, deg){
+    const {r,g,b} = hexToRgb(hex);
+    const {h,s,l} = rgbToHsl(r,g,b);
+    const hh = (h + deg) % 360;
+    const {r:rr,g:gg,b:bb} = hslToRgb(hh,s,l);
+    return rgbToHex(rr,gg,bb);
+  }
+
+  // ---- spawning patterns & obstacles ----
+  // queueNextPattern computes where to place next pattern and pushes obstacles into obstacles[]
+  function queueNextPattern(){
+    // pick next pattern in sequence (cyclic)
+    const pattern = PATTERNS[patternIndex % PATTERNS.length];
+    patternIndex++;
+    // randomize small gap variation
+    const gap = PATTERN_GAP_BASE + Math.floor(Math.random()*PATTERN_GAP_VARIATION) - PATTERN_GAP_VARIATION/2;
+    // compute positions for items in pattern relative to nextSpawnX
+    let baseX = nextSpawnX;
+    // ensure spawn is not too close to last obstacle (safe margin)
+    const safeMargin = 30;
+    if(obstacles.length){
+      const last = obstacles[obstacles.length-1];
+      if(baseX - (last.x + last.width) < safeMargin) baseX = last.x + last.width + safeMargin;
+    }
+    for(const item of pattern){
+      const obX = baseX + item.x;
+      const ob = createObstacle(item.type, obX);
+      // ensure no overlap with existing obstacles; if overlapped, push forward
+      while(isOverlappingAny(ob.x, ob.width)){
+        ob.x += 12;
+      }
+      obstacles.push(ob);
+    }
+    nextSpawnX = baseX + (pattern.reduce((m,i)=>Math.max(m,i.x),0) + gap + 120);
+  }
+
+  function createObstacle(type, x){
+    if(type === 'block'){
+      return { type:'block', x: Math.round(x), y: GROUND_Y - 30, width: 48, height: 30 };
+    } else { // spike
+      return { type:'spike', x: Math.round(x), y: GROUND_Y - 26, width: 36, height: 26 };
+    }
+  }
+
+  function isOverlappingAny(x, w){
+    for(const o of obstacles){
+      if(Math.abs(o.x - x) < (o.width + w)/1.5) return true;
+    }
+    return false;
+  }
+
+  // ---- input ----
+  function doJump(){
+    if(gameOver || youWin) return;
+    if(player.onGround){
+      player.vy = JUMP_FORCE;
+      player.onGround = false;
+    }
+  }
+  window.addEventListener('keydown', e => { if(e.code === 'Space' || e.code === 'ArrowUp') doJump(); });
+  window.addEventListener('mousedown', () => doJump());
+
+  // ---- color change every 100 score ----
+  function updateColorsByScore(){
+    const idx = Math.floor(score / 100) % BG_PALETTE.length;
+    if(idx !== lastBgIndex){
+      lastBgIndex = idx;
+      bgColor = BG_PALETTE[idx];
+      obstacleColor = invertHex(bgColor);
+      // make player color different from obstacle color but still contrasting to bg
+      playerColor = shiftHue(obstacleColor, 40);
+      // ensure not identical by fallback
+      if(playerColor.toLowerCase() === obstacleColor.toLowerCase()){
+        playerColor = shiftHue(obstacleColor, -40);
       }
     }
   }
 
-  obstacles = obstacles.filter(o => o.x + o.width > 0);
-
-  score++;
-  if (score % 500 === 0) speed += 0.5;
-
-  if (score >= 10000) {
-    gameWon = true;
+  // ---- collision detection ----
+  function rectsCollide(a,b){
+    return !(a.x + a.width <= b.x || a.x >= b.x + b.width || a.y + a.height <= b.y || a.y >= b.y + b.height);
   }
-}
-
-function draw() {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-  ctx.fillStyle = "#FFD700";
-  ctx.fillRect(player.x, player.y, player.size, player.size);
-
-  for (let obs of obstacles) {
-    if (obs.type === 'block') {
-      ctx.fillStyle = "#00BFFF";
-      ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
-    } else {
-      ctx.fillStyle = "#FF0000";
-      ctx.beginPath();
-      ctx.moveTo(obs.x, obs.y + obs.height);
-      ctx.lineTo(obs.x + obs.width / 2, obs.y);
-      ctx.lineTo(obs.x + obs.width, obs.y + obs.height);
-      ctx.closePath();
-      ctx.fill();
+  // For spikes we'll approximate with AABB hitting the triangle base area
+  function checkHitPlayer(ob){
+    const pRect = { x: player.x, y: player.y, width: player.w, height: player.h };
+    const obRect = { x: ob.x, y: ob.y, width: ob.width, height: ob.height };
+    if(ob.type === 'block'){
+      return rectsCollide(pRect, obRect);
+    } else { // spike
+      // treat spike as full rectangle for collisions but shrink its vertical hitbox a bit
+      const spikeHitbox = { x: obRect.x, y: obRect.y + 4, width: obRect.width, height: obRect.height - 4 };
+      return rectsCollide(pRect, spikeHitbox);
     }
   }
 
-  ctx.fillStyle = "#fff";
-  ctx.font = "20px Arial";
-  ctx.fillText(`Score: ${score}`, 20, 30);
-  ctx.fillText(`High Score: ${highScore}`, 20, 60);
+  // ---- main loop ----
+  function update(){
+    if(gameOver || youWin) return;
 
-  if (gameOver) {
-    ctx.fillStyle = "red";
-    ctx.font = "40px Arial";
-    ctx.fillText("Game Over", canvas.width / 2 - 100, canvas.height / 2);
-    ctx.font = "20px Arial";
-    ctx.fillText("Press Space or Click to Restart", canvas.width / 2 - 140, canvas.height / 2 + 40);
+    // win check
+    if(score >= WIN_SCORE){
+      youWin = true;
+      gameOver = true;
+      return;
+    }
+
+    // Update jump force decrease rule (if you'd like dynamic, uncomment)
+    // (earlier versions had jump change over time — here we keep fixed JUMP_FORCE for consistency)
+    // JUMP_FORCE logic could be added here.
+
+    // physics
+    player.vy += GRAVITY;
+    player.y += player.vy;
+    if(player.y + player.h >= GROUND_Y){
+      player.y = GROUND_Y - player.h;
+      player.vy = 0;
+      player.onGround = true;
+    } else {
+      player.onGround = false;
+    }
+
+    // move obstacles
+    for(const ob of obstacles){
+      ob.x -= scrollSpeed;
+    }
+    // remove offscreen
+    obstacles = obstacles.filter(o => o.x + o.width > -50);
+
+    // spawn next pattern when nextSpawnX approaches canvas width enough
+    if(nextSpawnX < canvas.width + 400 && obstacles.length < 40){
+      queueNextPattern();
+    }
+
+    // simple timer alternative: ensure there are always enough queued patterns
+    if(obstacles.length < 6){
+      queueNextPattern();
+    }
+
+    // collision check
+    for(const ob of obstacles){
+      if(checkHitPlayer(ob)){
+        gameOver = true;
+        if(score > highScore){ highScore = score; localStorage.setItem('gdHighScore', highScore); }
+      }
+    }
+
+    // scoring & speedup
+    score++;
+    if(score % 500 === 0){
+      scrollSpeed += SPEED_INCREASE_PER_500;
+    }
+
+    // background color update
+    updateColorsByScore();
   }
 
-  if (gameWon) {
-    ctx.fillStyle = "lime";
-    ctx.font = "50px Arial";
-    ctx.fillText("YOU WIN!", canvas.width / 2 - 130, canvas.height / 2);
+  function draw(){
+    // background
+    ctx.fillStyle = bgColor;
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+
+    // ground line
+    ctx.fillStyle = '#9aa0a6';
+    ctx.fillRect(0, GROUND_Y, canvas.width, canvas.height - GROUND_Y);
+
+    // player
+    ctx.fillStyle = playerColor;
+    ctx.fillRect(player.x, player.y, player.w, player.h);
+
+    // obstacles
+    for(const ob of obstacles){
+      if(ob.type === 'block'){
+        ctx.fillStyle = obstacleColor;
+        ctx.fillRect(ob.x, ob.y, ob.width, ob.height);
+      } else {
+        // spike: draw triangle but use obstacleColor
+        ctx.fillStyle = obstacleColor;
+        ctx.beginPath();
+        ctx.moveTo(ob.x, ob.y + ob.height);
+        ctx.lineTo(ob.x + ob.width/2, ob.y);
+        ctx.lineTo(ob.x + ob.width, ob.y + ob.height);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+
+    // HUD
+    ctx.fillStyle = playerColor;
+    ctx.font = '20px Arial';
+    ctx.textAlign = 'left';
+    ctx.fillText(`Score: ${score}`, 14, 28);
+    ctx.fillText(`High Score: ${highScore}`, 14, 54);
+
+    if(gameOver && !youWin){
+      ctx.fillStyle = '#e74c3c';
+      ctx.textAlign = 'center';
+      ctx.font = '44px Arial';
+      ctx.fillText('Game Over', canvas.width/2, canvas.height/2 - 10);
+      ctx.font = '18px Arial';
+      ctx.fillText('Press Space / Up or Click to Restart', canvas.width/2, canvas.height/2 + 24);
+    }
+
+    if(youWin){
+      const alpha = 0.5 + 0.5 * Math.sin(Date.now()/200);
+      ctx.fillStyle = `rgba(46,204,113,${alpha})`;
+      ctx.textAlign = 'center';
+      ctx.font = '56px Arial';
+      ctx.fillText('YOU WIN!', canvas.width/2, canvas.height/2);
+    }
   }
-}
 
-function gameLoop() {
-  update();
-  draw();
-  requestAnimationFrame(gameLoop);
-}
+  function loop(){
+    update();
+    draw();
+    requestAnimationFrame(loop);
+  }
 
-document.addEventListener('keydown', e => {
-  if (gameOver && e.code === 'Space') resetGame();
-});
-document.addEventListener('mousedown', () => {
-  if (gameOver) resetGame();
-});
+  // restart handling
+  window.addEventListener('keydown', e => {
+    if((e.code === 'Space' || e.code === 'ArrowUp') && (gameOver || youWin)){
+      initGame();
+    }
+  });
+  window.addEventListener('mousedown', e => {
+    if(gameOver || youWin) initGame();
+  });
 
-gameLoop();
+  // prevent initial overlap: make sure first queued patterns are far enough ahead
+  initGame();
+  loop();
+
+})();
 </script>
 </body>
 </html>
