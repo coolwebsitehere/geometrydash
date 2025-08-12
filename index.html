@@ -47,8 +47,8 @@
   const JUMP_INITIAL_DECREASE_LIMIT = 2500;
   const OBSTACLE_INTERVAL_START = 120;
   const OBSTACLE_INTERVAL_MIN = 45;
-  const SPEED_INCREMENT = 0.05;
-  const SPEED_START = 6;
+  const SPEED_START = 8; // Start faster than before (6 -> 8)
+  const SPEED_INCREMENT = 0.1; // Increase speed faster than before (0.05 -> 0.1)
 
   // Game state variables
   let player, obstacles, scrollSpeed, score, highScore, gameOver, youWin;
@@ -58,7 +58,6 @@
   let rotationAngle = 0;
 
   // Patterns with spacing: no two blocks side-by-side
-  // spacing ensures obstacles don't overlap or cluster too much
   const patterns = [
     [{type:'spike', count:1, spacing: 120}],
     [{type:'spike', count:3, spacing: 60}],
@@ -90,23 +89,18 @@
 
     highScore = parseInt(localStorage.getItem('gdHighScore')) || 0;
 
-    // Start with first theme
     currentThemeIndex = 0;
     applyTheme(currentThemeIndex);
 
-    // Spawn initial obstacles spaced well
     let startX = canvas.width + 100;
     for(let i = 0; i < 5; i++) {
       addPattern(startX);
-      startX += 320; // bigger gap between initial obstacles
+      startX += 320;
     }
   }
 
-  // Add pattern obstacles starting at startX
   function addPattern(startX){
-    const pattern = patterns[score < 4000 ? score % patterns.length : (score % patterns.length)]; 
-    // Using modulo to loop patterns; can be improved if desired
-
+    const pattern = patterns[score < 4000 ? score % patterns.length : (score % patterns.length)];
     let currentX = startX;
 
     for(const pat of pattern){
@@ -120,7 +114,7 @@
         });
         currentX += pat.spacing;
       }
-      currentX += 120; // extra space after pattern group
+      currentX += 120;
     }
   }
 
@@ -149,7 +143,6 @@
       return;
     }
 
-    // Jump force decreases slowly over time but capped
     if(score < JUMP_INITIAL_DECREASE_LIMIT){
       jumpForce = JUMP_INITIAL_FORCE;
     } else {
@@ -166,7 +159,6 @@
       player.onGround = true;
     }
 
-    // Move obstacles left and check collisions
     for(let i = obstacles.length - 1; i >= 0; i--){
       const ob = obstacles[i];
       ob.x -= scrollSpeed;
@@ -247,7 +239,6 @@
     ctx.fillText(`Score: ${score}`, 10, 30);
     ctx.fillText(`High Score: ${highScore}`, 10, 60);
 
-    // Game over
     if(gameOver && !youWin){
       ctx.fillStyle = '#e74c3c';
       ctx.font = '40px Arial';
@@ -257,7 +248,6 @@
       ctx.fillText('Press Space, Up or Click to Restart', canvas.width / 2, canvas.height / 2 + 20);
     }
 
-    // Win message
     if(youWin){
       const alpha = 0.5 + 0.5 * Math.sin(Date.now() / 200);
       ctx.fillStyle = `rgba(46, 204, 113, ${alpha})`;
@@ -271,7 +261,8 @@
     if(!gameOver && player.onGround){
       player.velocityY = jumpForce;
       player.onGround = false;
-      rotationAngle += Math.PI / 2; // 90 deg rotation
+      // Rotate 90 degrees clockwise on each jump
+      rotationAngle += Math.PI / 2;
       player.rotation = rotationAngle;
     } else if(gameOver){
       initGame();
